@@ -1,0 +1,17 @@
+name = "hivemind-worker"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+account_id = "YOUR_ACCOUNT_ID"
+
+
+# KV Namespace binding
+# After running `wrangler kv:namespace create HIVEMIND_KV`, paste the ID below
+[[kv_namespaces]]
+binding = "HIVEMIND_KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+# Environment variables (secrets - set via wrangler secret put)
+# ALLIANCE_KEY - Shared key for user auth
+# ADMIN_KEY    - Secret admin key for Command Center
+# Example: wrangler secret put ADMIN_KEY
+# Example: wrangler secret put ALLIANCE_KEY

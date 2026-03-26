@@ -1,0 +1,1117 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Space+Mono:wght@400;700&family=VT323&family=Orbitron:wght@400;700;900&family=Special+Elite&display=swap");
+
+/* ========================================
+   HIVEMIND - Concrete Brutalist Theme
+   ======================================== */
+
+:root {
+  --hm-bg: #d4d0c8;
+  --hm-text: #1a1a1a;
+  --hm-accent: #d42020;
+  --hm-muted: #6b6b6b;
+  --hm-border: #1a1a1a;
+  --hm-white: #ffffff;
+  --hm-success: #1a7a1a;
+  --hm-error: #d42020;
+  --hm-header-color: #d42020;
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-mono: "Space Mono", "Courier New", monospace;
+}
+
+/* === Container === */
+.HM_Container {
+  margin-top: 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background-color: var(--hm-bg);
+  color: var(--hm-text);
+  padding: 0;
+  width: 620px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* === Header === */
+.hm-header {
+  padding: 20px 24px 16px;
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      var(--hm-border),
+      var(--hm-border) 4px,
+      transparent 4px,
+      transparent 8px
+    ),
+    repeating-linear-gradient(
+      to right,
+      var(--hm-border),
+      var(--hm-border) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+  background-position: top, bottom;
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+  border: none;
+}
+.hm-title {
+  font-family: var(--font-display);
+  font-size: 4rem;
+  font-weight: 900;
+  letter-spacing: -2px;
+  line-height: 0.85;
+  margin: 0;
+  text-transform: uppercase;
+}
+.hm-version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--hm-text);
+  margin-top: 4px;
+  font-weight: 700;
+}
+.hm-header-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+/* === Sections === */
+.hm-section {
+  padding: 24px 24px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--hm-border),
+    var(--hm-border) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  background-position: bottom;
+  background-size: 100% 1px;
+  background-repeat: no-repeat;
+  border: none;
+}
+.hm-section-header {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 900; /* Heavier weight per screenshot */
+  text-transform: uppercase;
+  font-style: italic;
+  color: var(--hm-header-color); /* Theme-specific header color */
+  letter-spacing: -1px;
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  line-height: 1;
+}
+.hm-section-header.collapsed {
+  margin-bottom: 0;
+}
+.hm-section-header:not(.collapsed) {
+  margin-bottom: 20px;
+}
+.hm-section-header.collapsible {
+  cursor: pointer;
+}
+.hm-section-header.collapsible:hover {
+  opacity: 0.7;
+}
+.hm-collapse-icon {
+  font-size: 0.8rem;
+  transition: transform 0.2s;
+  font-family: sans-serif;
+  font-style: normal;
+}
+.hm-section-header.collapsed .hm-collapse-icon {
+  transform: rotate(-90deg);
+}
+.hm-section-content {
+  transition:
+    max-height 0.3s ease,
+    opacity 0.2s ease;
+  overflow: hidden;
+}
+.hm-section-content.collapsed {
+  max-height: 0 !important;
+  opacity: 0;
+}
+
+/* === Grid Layouts === */
+.hm-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.hm-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+/* === Data Display === */
+.hm-data-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--hm-muted);
+  margin-bottom: 2px;
+  letter-spacing: 0.5px;
+  text-align: left; /* Reverted to left */
+}
+.hm-data-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.hm-data-value.large {
+  font-size: 1.8rem;
+}
+.hm-data-value.highlight {
+  color: var(--hm-accent);
+}
+
+/* === Inputs & Selects === */
+.hm-input,
+.hm-select {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 0;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left; /* Aligned to left per user request */
+}
+.hm-input:focus,
+.hm-select:focus {
+  outline: none;
+  border-bottom: 2px solid var(--hm-text);
+}
+.hm-input-sm {
+  width: 80px;
+  text-align: left;
+}
+.hm-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+/* === Buttons === */
+.hm-btn {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.15s ease;
+}
+.hm-btn:hover {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+}
+.hm-btn-primary {
+  display: block;
+  width: 100%;
+  background: var(--hm-text);
+  color: var(--hm-white);
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 18px 24px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.hm-btn-primary:hover {
+  opacity: 0.85;
+}
+.hm-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hm-btn-small {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.15s ease;
+}
+.hm-btn-small:hover {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+}
+.hm-btn-success {
+  border-color: var(--hm-success);
+  color: var(--hm-success);
+}
+.hm-btn-success:hover {
+  background: var(--hm-success);
+  color: var(--hm-white);
+}
+.hm-btn-danger {
+  border-color: var(--hm-error);
+  color: var(--hm-error);
+}
+.hm-btn-danger:hover {
+  background: var(--hm-error);
+  color: var(--hm-white);
+}
+
+/* === Toggle Button === */
+.hm-toggle {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.hm-toggle.on {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+}
+.hm-toggle-sm {
+  font-size: 10px;
+  padding: 2px 6px;
+  min-width: 24px;
+}
+
+/* === Defense Grid === */
+.hm-defense-grid {
+  display: grid;
+  grid-template-columns: 120px 100px 1fr 100px; /* Better proportions per screenshot */
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.hm-defense-row {
+  display: contents;
+}
+.hm-defense-label {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 900; /* Extra bold per screenshot */
+  text-transform: uppercase;
+  line-height: 1;
+}
+.hm-defense-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--hm-border);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left; /* Left align per user request */
+  padding: 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hm-defense-input:focus {
+  outline: none;
+  border-bottom: 2px solid var(--hm-text);
+}
+.hm-defense-status {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+.hm-defense-status .ok {
+  color: var(--hm-text);
+}
+.hm-defense-status .pending {
+  color: var(--hm-muted);
+}
+
+/* === Wave Table === */
+.hm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 10px;
+}
+.hm-table th {
+  text-align: left;
+  font-weight: 700;
+  color: var(--hm-text); /* Higher contrast for headers */
+  text-transform: uppercase;
+  font-size: 10px;
+  padding: 10px 4px;
+  border-bottom: 2px solid var(--hm-border); /* Thicker line for table header */
+}
+.hm-table td {
+  padding: 12px 4px;
+  border-bottom: 1px dotted var(--hm-border);
+}
+.hm-table tr:hover td {
+  background: rgba(0, 0, 0, 0.05); /* Subtle row hover */
+}
+.hm-table tr:last-child td {
+  border-bottom: none;
+}
+.hm-table .total-row {
+  font-weight: 700;
+  border-top: 1px dotted var(--hm-border);
+}
+.hm-table .total-row td {
+  padding-top: 10px;
+  border-bottom: none;
+}
+.hm-row-error {
+  color: var(--hm-error);
+}
+
+/* === Status Indicators === */
+.hm-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.hm-status-dot.active {
+  background: var(--hm-success);
+}
+.hm-status-dot.pending {
+  background: var(--hm-muted);
+}
+.hm-status-dot.error {
+  background: var(--hm-error);
+}
+
+/* === Toast Notifications === */
+.hm-toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hm-toast {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 10px 16px;
+  animation:
+    hmSlideIn 0.3s ease,
+    hmFadeOut 0.3s ease 2.7s;
+  min-width: 220px;
+}
+.hm-toast.success {
+  background: var(--hm-text);
+  color: var(--hm-white);
+}
+.hm-toast.error {
+  background: var(--hm-error);
+  color: var(--hm-white);
+}
+.hm-toast.info {
+  background: var(--hm-bg);
+  color: var(--hm-text);
+  border: 1px solid var(--hm-border);
+}
+@keyframes hmSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes hmFadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* === Spinner === */
+.hm-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--hm-text);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: hmSpin 0.6s linear infinite;
+}
+@keyframes hmSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* === Hints === */
+.hm-hint {
+  font-size: 10px;
+  color: var(--hm-muted);
+  margin-top: 8px;
+}
+
+/* === Misc === */
+/* === Footer & Branding === */
+.hm-footer {
+  background: none;
+  padding-top: 12px;
+  padding-bottom: 24px;
+  margin-top: 0;
+  text-align: center;
+}
+.hm-footer-disclaimer {
+  color: #c8102e;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* === Helper Utilities === */
+.hm-flex-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* === Modal === */
+.hm-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 99999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(2px);
+}
+.hm-modal {
+  background: var(--hm-bg);
+  border: 3px solid var(--hm-border);
+  width: 450px;
+  max-width: 90%;
+  box-shadow: 15px 15px 0px rgba(0, 0, 0, 0.8);
+  animation: hmSlideIn 0.2s ease-out;
+}
+.hm-modal-header {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+  padding: 16px 20px;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--hm-border);
+  display: flex;
+  justify-content: center;
+}
+.hm-modal-body {
+  padding: 24px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--hm-text);
+  line-height: 1.5;
+}
+.hm-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px dashed var(--hm-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.05);
+}
+.hm-modal-warning {
+  color: var(--hm-header-color);
+  font-weight: 700;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+.hm-modal-data-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.hm-modal-value {
+  font-weight: 700;
+}
+
+/* === Loading States === */
+.hm-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #fff;
+  animation: hm-spin 1s ease-in-out infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes hm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hm-btn.loading,
+.hm-btn-primary.loading {
+  opacity: 0.7;
+  cursor: wait;
+  pointer-events: none;
+}
+
+/* === Flood Queue === */
+.hm-queue-footer {
+  padding: 12px 0;
+  border-top: 1px dashed var(--hm-border);
+  font-size: 11px;
+  color: var(--hm-muted);
+  text-align: center;
+}
+.hm-queue-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid var(--hm-border);
+}
+.hm-row-active {
+  background-color: rgba(45, 90, 39, 0.3) !important;
+}
+.hm-row-active td {
+  font-weight: 700;
+}
+.hm-empty {
+  text-align: center;
+  padding: 24px;
+  color: var(--hm-muted);
+  font-style: italic;
+}
+.hm-btn-small {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.hm-btn-small:hover {
+  background: var(--hm-error);
+  color: var(--hm-white);
+}
+.hm-btn-warn {
+  background: #b57d00;
+  color: var(--hm-white);
+}
+.hm-btn-warn:hover {
+  background: #8a6000;
+}
+
+/* === DUAL CLOCK (Freshman Brutalist Theme) === */
+.hm-clock-container {
+  background-color: var(--hm-bg);
+  border: 2px solid var(--hm-border);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  box-sizing: border-box;
+}
+.hm-clock-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 4px 0;
+}
+.hm-clock-label {
+  color: var(--hm-header-color); /* Matches section headers */
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.hm-clock-time {
+  color: var(--hm-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.hm-clock-diff {
+  text-align: center;
+  color: var(--hm-muted);
+  font-size: 9px;
+  margin-top: 6px;
+  font-style: italic;
+}
+
+/* Elements positioned AFTER (below) the Option+ box */
+.hm-sidebar-below {
+  position: relative !important;
+  width: 220px !important; /* Match game sidebar content width */
+  margin-left: 15px !important; /* Default left alignment */
+  margin-bottom: 5px;
+  box-sizing: border-box;
+  z-index: 100;
+}
+
+/* Match game's responsive sidebar alignment (see #boiteComptePlus in game CSS) */
+@media screen and (min-width: 97em) {
+  /* 1550px */
+  .hm-sidebar-below {
+    margin-left: 65px !important;
+  }
+}
+
+/* Note: Game CSS has a breakpoint at 112em (1800px) extending left to 165px */
+@media screen and (min-width: 112em) {
+  /* 1800px */
+  .hm-sidebar-below {
+    margin-left: 165px !important;
+  }
+}
+
+/* Clock styling when below Option+ */
+.hm-clock-container.hm-sidebar-below {
+  background: var(--hm-bg, #a8a8a6);
+  border: 2px solid var(--hm-border, #5a5a58);
+  padding: 8px 10px;
+}
+
+/* Settings styling when below Clock */
+.hm-settings-panel.hm-sidebar-below {
+  background: var(--hm-bg, #a8a8a6);
+  border: 2px solid var(--hm-border, #5a5a58);
+}
+
+/* ========================================
+   THEME SYSTEM
+   ======================================== */
+
+/* Theme: Concrete Brutalist (Default)
+   Inspired by raw concrete architecture — warm grey,
+   aggressive red, heavy shadows, stark contrast */
+[data-hm-theme="brutalist"] {
+  --hm-bg: #d4d0c8;
+  --hm-text: #1a1a1a;
+  --hm-accent: #d42020;
+  --hm-muted: #6b6b6b;
+  --hm-border: #1a1a1a;
+  --hm-white: #ffffff;
+  --hm-success: #1a7a1a;
+  --hm-error: #d42020;
+  --hm-header-color: #d42020;
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-mono: "Space Mono", "Courier New", monospace;
+}
+/* Brutalist overrides: heavy shadows, thick borders */
+[data-hm-theme="brutalist"] .HM_Container {
+  box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.4);
+  border: 3px solid #1a1a1a;
+}
+[data-hm-theme="brutalist"] .hm-modal {
+  box-shadow: 12px 12px 0 rgba(0, 0, 0, 0.7);
+  border-width: 3px;
+}
+[data-hm-theme="brutalist"] .hm-btn-primary {
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.3);
+}
+[data-hm-theme="brutalist"] .hm-btn-primary:hover {
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  transform: translate(2px, 2px);
+}
+[data-hm-theme="brutalist"] .hm-section-header {
+  border-left: 4px solid #d42020;
+  padding-left: 12px;
+}
+
+/* Theme: Neon Syndicate (Cyber)
+   Cyberpunk noir — deep void, electric cyan headers,
+   neon pink accents, subtle glow effects */
+[data-hm-theme="cyber"] {
+  --hm-bg: #080c14;
+  --hm-text: #e0f0ff;
+  --hm-accent: #ff2a6d;
+  --hm-muted: #4a5568;
+  --hm-border: #1a2744;
+  --hm-white: #ffffff;
+  --hm-success: #00e5a0;
+  --hm-error: #ff2a6d;
+  --hm-header-color: #00d4ff;
+  --font-display: "Orbitron", sans-serif;
+  --font-mono: "Space Mono", "Courier New", monospace;
+}
+/* Cyber overrides: glowing borders, neon text shadows */
+[data-hm-theme="cyber"] .HM_Container {
+  border: 1px solid #1a2744;
+  box-shadow:
+    0 0 12px rgba(0, 212, 255, 0.15),
+    0 0 40px rgba(0, 212, 255, 0.05),
+    inset 0 1px 0 rgba(0, 212, 255, 0.1);
+}
+[data-hm-theme="cyber"] .hm-header {
+  background-image: none;
+  border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+}
+[data-hm-theme="cyber"] .hm-title {
+  text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+}
+[data-hm-theme="cyber"] .hm-section {
+  background-image: none;
+  border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+}
+[data-hm-theme="cyber"] .hm-section-header {
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+[data-hm-theme="cyber"] .hm-btn:hover {
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+  border-color: #00d4ff;
+}
+[data-hm-theme="cyber"] .hm-btn-primary {
+  background: linear-gradient(135deg, #00d4ff 0%, #0088cc 100%);
+  color: #080c14;
+  border: none;
+  text-shadow: none;
+}
+[data-hm-theme="cyber"] .hm-btn-primary:hover {
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.5);
+}
+[data-hm-theme="cyber"] .hm-modal {
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 212, 255, 0.2), 0 0 60px rgba(0, 212, 255, 0.05);
+}
+[data-hm-theme="cyber"] .hm-modal-header {
+  background: linear-gradient(135deg, #0a1628 0%, #0d1f3c 100%);
+  color: #00d4ff;
+  border-bottom: 1px solid rgba(0, 212, 255, 0.3);
+}
+[data-hm-theme="cyber"] .hm-table th {
+  border-bottom: 1px solid rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+[data-hm-theme="cyber"] .hm-table td {
+  border-bottom: 1px solid rgba(0, 212, 255, 0.06);
+}
+[data-hm-theme="cyber"] .hm-table tr:hover td {
+  background: rgba(0, 212, 255, 0.05);
+}
+[data-hm-theme="cyber"] .hm-clock-container {
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.15);
+}
+[data-hm-theme="cyber"] .hm-toast.success {
+  background: linear-gradient(135deg, #0a1628, #0d1f3c);
+  border: 1px solid rgba(0, 229, 160, 0.3);
+  color: #00e5a0;
+}
+[data-hm-theme="cyber"] .hm-toast.error {
+  background: linear-gradient(135deg, #1a0a14, #2a0a1a);
+  border: 1px solid rgba(255, 42, 109, 0.3);
+}
+[data-hm-theme="cyber"] .hm-input,
+[data-hm-theme="cyber"] .hm-defense-input {
+  border-bottom-color: #1a2744;
+}
+[data-hm-theme="cyber"] .hm-input:focus,
+[data-hm-theme="cyber"] .hm-defense-input:focus {
+  border-bottom-color: #00d4ff;
+  box-shadow: 0 1px 0 rgba(0, 212, 255, 0.3);
+}
+
+/* Theme: Phosphor CRT (Terminal)
+   Authentic retro terminal — green phosphor glow,
+   scanline texture, slight CRT curvature feel */
+[data-hm-theme="terminal"] {
+  --hm-bg: #0a0e08;
+  --hm-text: #33ff33;
+  --hm-accent: #33ff33;
+  --hm-muted: #1a6b1a;
+  --hm-border: #1a4a1a;
+  --hm-white: #33ff33;
+  --hm-success: #33ff33;
+  --hm-error: #ff4444;
+  --hm-header-color: #66ff66;
+  --font-display: "VT323", monospace;
+  --font-mono: "VT323", monospace;
+}
+/* Terminal overrides: phosphor glow, scanlines */
+[data-hm-theme="terminal"] .HM_Container {
+  border: 1px solid #1a4a1a;
+  box-shadow:
+    0 0 10px rgba(51, 255, 51, 0.08),
+    inset 0 0 60px rgba(51, 255, 51, 0.03);
+  position: relative;
+}
+/* Scanline overlay */
+[data-hm-theme="terminal"] .HM_Container::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.15) 2px,
+    rgba(0, 0, 0, 0.15) 4px
+  );
+  z-index: 1;
+}
+[data-hm-theme="terminal"] .hm-title {
+  text-shadow: 0 0 8px rgba(51, 255, 51, 0.6);
+}
+[data-hm-theme="terminal"] .hm-header {
+  background-image: none;
+  border-bottom: 1px solid #1a4a1a;
+}
+[data-hm-theme="terminal"] .hm-section {
+  background-image: none;
+  border-bottom: 1px solid #1a4a1a;
+}
+[data-hm-theme="terminal"] .hm-section-header {
+  text-shadow: 0 0 6px rgba(102, 255, 102, 0.5);
+  font-style: normal;
+}
+[data-hm-theme="terminal"] .hm-data-value {
+  text-shadow: 0 0 4px rgba(51, 255, 51, 0.4);
+}
+[data-hm-theme="terminal"] .hm-btn {
+  border-color: #1a4a1a;
+}
+[data-hm-theme="terminal"] .hm-btn:hover {
+  background: #1a4a1a;
+  color: #33ff33;
+  text-shadow: 0 0 6px rgba(51, 255, 51, 0.5);
+}
+[data-hm-theme="terminal"] .hm-btn-primary {
+  background: #1a4a1a;
+  color: #33ff33;
+  border: 1px solid #33ff33;
+  text-shadow: 0 0 8px rgba(51, 255, 51, 0.5);
+}
+[data-hm-theme="terminal"] .hm-btn-primary:hover {
+  background: #33ff33;
+  color: #0a0e08;
+  text-shadow: none;
+}
+[data-hm-theme="terminal"] .hm-modal {
+  border: 1px solid #33ff33;
+  box-shadow: 0 0 20px rgba(51, 255, 51, 0.15);
+}
+[data-hm-theme="terminal"] .hm-modal-header {
+  background: #0a0e08;
+  color: #66ff66;
+  border-bottom: 1px solid #1a4a1a;
+  text-shadow: 0 0 8px rgba(102, 255, 102, 0.5);
+}
+[data-hm-theme="terminal"] .hm-table th {
+  border-bottom: 1px solid #1a4a1a;
+  text-shadow: 0 0 4px rgba(51, 255, 51, 0.3);
+}
+[data-hm-theme="terminal"] .hm-table td {
+  border-bottom: 1px dotted #1a4a1a;
+}
+[data-hm-theme="terminal"] .hm-table tr:hover td {
+  background: rgba(51, 255, 51, 0.05);
+}
+[data-hm-theme="terminal"] .hm-clock-container {
+  box-shadow: 0 0 6px rgba(51, 255, 51, 0.1);
+}
+[data-hm-theme="terminal"] .hm-clock-time {
+  text-shadow: 0 0 6px rgba(51, 255, 51, 0.5);
+}
+[data-hm-theme="terminal"] .hm-toast.success {
+  background: #0a0e08;
+  border: 1px solid #33ff33;
+  color: #33ff33;
+  text-shadow: 0 0 4px rgba(51, 255, 51, 0.4);
+}
+[data-hm-theme="terminal"] .hm-toast.error {
+  background: #0a0e08;
+  border: 1px solid #ff4444;
+  color: #ff4444;
+}
+[data-hm-theme="terminal"] .hm-input,
+[data-hm-theme="terminal"] .hm-defense-input {
+  border-bottom-color: #1a4a1a;
+  text-shadow: 0 0 3px rgba(51, 255, 51, 0.3);
+}
+[data-hm-theme="terminal"] .hm-input:focus,
+[data-hm-theme="terminal"] .hm-defense-input:focus {
+  border-bottom-color: #33ff33;
+}
+
+/* Theme: Warm Sepia
+   Vintage paper & ink — typewriter aesthetic,
+   parchment warmth, dark maroon accents */
+[data-hm-theme="sepia"] {
+  --hm-bg: #f4ecd8;
+  --hm-text: #5c4033;
+  --hm-accent: #8b4513;
+  --hm-muted: #a0816c;
+  --hm-border: #5c4033;
+  --hm-white: #ffffff;
+  --hm-error: #8b0000;
+  --hm-header-color: #8b0000;
+  --font-display: "Special Elite", cursive;
+  --font-mono: "Special Elite", monospace;
+}
+
+/* === SETTINGS PANEL === */
+.hm-settings-panel {
+  background-color: #a8a8a6; /* Fallback */
+  background-color: var(--hm-bg) !important; /* Force override */
+  border: 2px solid var(--hm-border);
+  border-bottom: none; /* Tab style from bottom */
+  font-family: var(--font-mono);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column-reverse; /* Expand upwards */
+}
+
+.hm-settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  border-top: 1px solid var(--hm-border); /* Separator above header */
+  user-select: none;
+}
+.hm-settings-header:hover {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.hm-settings-title {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--hm-text);
+}
+
+.hm-settings-toggle {
+  font-size: 10px;
+  color: var(--hm-muted);
+}
+
+.hm-settings-content {
+  padding: 10px 12px;
+  background-color: #a8a8a6; /* Fallback */
+  background-color: var(--hm-bg) !important; /* Force override */
+}
+
+.hm-setting-group {
+  margin-bottom: 12px;
+  border-bottom: 1px dashed var(--hm-muted);
+  padding-bottom: 8px;
+}
+.hm-setting-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.hm-setting-label {
+  font-size: 9px;
+  color: var(--hm-text); /* Use high-contrast text color */
+  opacity: 0.9;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+
+.hm-setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.hm-select {
+  width: 100%;
+  background-color: #ffffff !important; /* Force white bg */
+  border: 1px solid var(--hm-border);
+  color: #000000 !important; /* Force black text */
+  padding: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+  -webkit-appearance: none; /* Remove default OS styling */
+  -moz-appearance: none;
+  appearance: none;
+  padding-right: 20px; /* Space for arrow */
+  background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23000000%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7em top 50%;
+  background-size: 0.65em auto;
+}
+
+.hm-input-small {
+  width: 80px;
+  background-color: #ffffff !important; /* Force white bg */
+  border: 1px solid var(--hm-border);
+  color: #000000 !important; /* Force black text */
+  padding: 2px 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+  outline: none;
+}
+
+.hm-checkbox-label {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--hm-text);
+  cursor: pointer;
+  user-select: none;
+}
+.hm-checkbox-label input {
+  margin-right: 8px;
+  accent-color: var(--hm-accent);
+}
+
+.hm-setting-footer {
+  text-align: center;
+  font-size: 9px;
+  color: var(--hm-muted);
+  margin-top: 8px;
+  opacity: 0.6;
+  border-top: 1px solid var(--hm-border);
+  padding-top: 4px;
+}
+
+/* === SIDEBAR LAYOUT FIX === */
+/* Position HiveMind elements at the bottom of the sidebar */
+#menuBoite {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+#HM_ClockContainer {
+  margin-top: auto !important;
+}

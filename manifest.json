@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "TQC HiveMind - Flood Calculator",
+  "version": "2.51",
+  "description": "Port of Calys Optiflood for TQC Alliance. Calculates optimal flood sequences.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "hivemind@rhyonfs.org",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": ["storage"],
+  "background": {
+    "service_worker": "extension/background.js"
+  },
+  "host_permissions": [
+    "http://*.fourmizzz.fr/*",
+    "https://*.fourmizzz.fr/*",
+    "http://*.antzzz.org/*",
+    "https://*.antzzz.org/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*.fourmizzz.fr/*",
+        "https://*.fourmizzz.fr/*",
+        "http://*.antzzz.org/*",
+        "https://*.antzzz.org/*"
+      ],
+      "js": [
+        "jquery.min.js",
+        "extension/core/compat.js",
+        "extension/core/logger.js",
+        "extension/core/storage.js",
+        "extension/ui/toast.js",
+        "extension/core/state.js",
+        "extension/core/utils.js",
+        "extension/core/simulator.js",
+        "extension/core/api.js",
+        "extension/core/engine.js",
+        "extension/ui/components.js",
+        "extension/ui/builder.js",
+        "extension/ui/keyboard.js",
+        "extension/features/flooding.js",
+        "extension/features/defense.js",
+        "extension/features/queue.js",
+        "extension/features/strategies.js",
+        "extension/features/alliance.js",
+        "extension/features/history.js",
+        "extension/features/range.js",
+        "extension/features/reports.js",
+        "extension/features/timers.js",
+        "extension/features/chat.js",
+        "extension/features/ranking.js",
+        "extension/features/alliance_rankings.js",
+        "extension/features/player_rankings.js",
+        "extension/features/diplomacy.js",
+        "extension/features/intel.js",
+        "extension/features/messagerie.js",
+        "extension/ui/clock.js",
+        "extension/ui/theme.js",
+        "extension/ui/settings.js",
+        "extension/network/network.js",
+        "extension/init.js"
+      ],
+      "css": ["extension/ui/styles.css"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "32": "icon.png"
+  }
+}
