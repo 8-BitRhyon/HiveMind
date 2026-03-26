@@ -15,7 +15,7 @@ var NetworkManager = {
     // ===============================================================
     
     // Cloudflare Worker URL (set after deployment)
-    workerUrl: "https://hivemind-worker.rhyonfs.workers.dev",
+    workerUrl: "https://YOUR_WORKER_SUBDOMAIN.workers.dev",
     
     // ===============================================================
     // STATE

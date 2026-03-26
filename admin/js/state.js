@@ -2,7 +2,7 @@
  * State Management (admin/js/state.js)
  */
 window.State = {
-    WORKER_URL: "https://hivemind-worker.rhyonfs.workers.dev",
+    WORKER_URL: "https://YOUR_WORKER_SUBDOMAIN.workers.dev",
     adminSession: null,
     
     // UI State
