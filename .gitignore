@@ -1,5 +1,9 @@
 # Node/Wrangler
 node_modules/
+config.js
+**/config.js
+walkthrough.md
+task.md
 .wrangler/
 .mf/
 dist/
@@ -10,12 +14,14 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs & Internal Docs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 logs/
 *.log
+Hivemind/
+senior_swe_report.md
 
 # Extension
 *.crx
@@ -23,3 +29,11 @@ logs/
 
 # Admin
 admin/.DS_Store
+admin/downloads/
+
+# Agent tooling and internal planning
+.agents/
+.commandcode/
+
+# CodeLens Graph local index
+.codelens/
