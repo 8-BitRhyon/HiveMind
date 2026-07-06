@@ -96,20 +96,30 @@ var MessagerieParser = {
             }
 
             // ── Onslaught/Conquest: "Onslaught on X : your troops have conquered the Hunting Field" ──
-            var onslaughtMatch = subject.match(/(?:onslaught on|assaut sur)\s+(.+?)\s*:/i);
+            var onslaughtMatch = subject.match(/(?:onslaught on|assaut sur)\s+(.+?)\s*:\s*(.+)/i);
             if (onslaughtMatch) {
+                var outcome = "UNKNOWN";
+                if (onslaughtMatch[2].match(/(?:conquered|conquis|victory|victoire)/i)) outcome = "VICTORY";
+                else if (onslaughtMatch[2].match(/(?:failed|[ée]chou[ée]|defeat|défaite|retreated)/i)) outcome = "DEFEAT";
+                
                 results.onslaughts.push({
                     target: onslaughtMatch[1].trim(),
+                    outcome: outcome,
                     convId: convId
                 });
                 continue;
             }
 
             // ── Invasion: "Invasion from X : your troops have lost the Hunting Field" ──
-            var invasionMatch = subject.match(/(?:invasion from|invasion de)\s+(.+?)\s*:/i);
+            var invasionMatch = subject.match(/(?:invasion from|invasion de)\s+(.+?)\s*:\s*(.+)/i);
             if (invasionMatch) {
+                var outcome = "UNKNOWN";
+                if (invasionMatch[2].match(/(?:lost|perdu|defeat|défaite)/i)) outcome = "DEFEAT";
+                else if (invasionMatch[2].match(/(?:repelled|repouss[ée]|victory|victoire)/i)) outcome = "VICTORY";
+
                 results.invasions.push({
                     attacker: invasionMatch[1].trim(),
+                    outcome: outcome,
                     convId: convId
                 });
                 continue;
@@ -200,6 +210,7 @@ var MessagerieParser = {
     parseInlineReport: function (text) {
         var report = {
             attacker: null,
+            defender: null,
             attackerTroops: {},
             defenderTroops: {},
             damage: { enemyBase: 0, enemyBonus: 0, youBase: 0, youBonus: 0, enemyKills: 0, youKills: 0 },
@@ -209,13 +220,26 @@ var MessagerieParser = {
         };
 
         // ── Who attacked? ──
-        // "Hemanthekolbold attacks your Hunting Field :"
-        var attackerMatch = text.match(/(\S+)\s+attacks?\s+(?:your\s+)?(?:hunting\s*field|nest|anthill)/i);
-        if (!attackerMatch) {
-            attackerMatch = text.match(/(\S+)\s+attaque\s+(?:votre\s+)?(?:terrain|nid|fourmili)/i);
+        // Enemy attacks YOU: "Hemanthekolbold attacks your Hunting Field :"
+        var enemyAttackMatch = text.match(/(\S+)\s+attacks?\s+(?:your\s+)?(?:hunting\s*field|nest|anthill)/i);
+        if (!enemyAttackMatch) {
+            enemyAttackMatch = text.match(/(\S+)\s+attaque\s+(?:votre\s+)?(?:terrain|nid|fourmili)/i);
         }
-        if (attackerMatch) {
-            report.attacker = attackerMatch[1];
+        
+        // YOU attack enemy: "You attack lari Hunting Field" or "Vous attaquez le terrain de chasse de lari"
+        var youAttackMatch = text.match(/(?:you\s+attack|vous\s+attaquez)\s+(?:le\s+terrain\s+de\s+chasse\s+de\s+|le\s+nid\s+de\s+|la\s+fourmili[èe]re\s+de\s+)?([^\s:]+)/i);
+
+        if (enemyAttackMatch) {
+            report.attacker = enemyAttackMatch[1];
+            report.defender = "TQC_SELF";
+        } else if (youAttackMatch) {
+            report.attacker = "TQC_SELF";
+            report.defender = youAttackMatch[1];
+            
+            // Clean up captured name just in case it matched 'Hunting' or similar (though it shouldn't if names are one word)
+            if (report.defender.toLowerCase() === "hunting" || report.defender.toLowerCase() === "terrain") {
+                 // Fallback if regex acts weirdly
+            }
         }
 
         // ── Attacking troops ──
@@ -233,7 +257,6 @@ var MessagerieParser = {
         }
 
         // ── Enemy damage line ──
-        // "The enemy inflicts 32 057 013 (+54 496 923) damages to your ants and kill 1."
         var enemyDmgMatch = text.match(
             /(?:(?:the\s+)?enemy\s+(?:inflicts?|deals?)|l[''\u2019]ennemi\s+inflige)\s*([\d\s,.]+)\s*\(\+([\d\s,.]+)\)\s*(?:damages?|d[ée]g[aâ]ts)[\s\S]*?(?:kills?|tue)\s*([\d\s,.]+)/i
         );
@@ -253,7 +276,6 @@ var MessagerieParser = {
         }
 
         // ── "You deal" damage line ──
-        // "You inflict 1 (+1) damages and kill 0 enemies."
         var youDmgMatch = text.match(
             /(?:you\s+(?:inflict|deal)|vous\s+infligez)\s*([\d\s,.]+)\s*\(\+([\d\s,.]+)\)\s*(?:damages?|d[ée]g[aâ]ts)[\s\S]*?(?:kills?|tuez)\s*([\d\s,.]+)/i
         );
@@ -262,10 +284,13 @@ var MessagerieParser = {
             report.damage.youBonus = this.parseNum(youDmgMatch[2]);
             report.damage.youKills = this.parseNum(youDmgMatch[3]);
 
+            // Determine whose troops died to your damage
+            var enemyTroops = report.attacker === "TQC_SELF" ? report.defenderTroops : report.attackerTroops;
+
             // Shield/Nest from life bonus if enough kills
-            if (report.damage.youKills >= 15 && Object.keys(report.attackerTroops).length > 0) {
+            if (report.damage.youKills >= 15 && Object.keys(enemyTroops).length > 0) {
                 var totalDmg = report.damage.youBase + report.damage.youBonus;
-                var hpResult = this.estimateBaseHP(report.attackerTroops, report.damage.youKills);
+                var hpResult = this.estimateBaseHP(enemyTroops, report.damage.youKills);
                 if (hpResult > 0) {
                     var lifeBonus = totalDmg / hpResult;
                     var assumedShield = report.techLevels.weapons || 0;
@@ -450,6 +475,28 @@ var MessagerieParser = {
             });
         }
 
+        // Invasions - enemy attacked us
+        for (var i = 0; i < results.invasions.length; i++) {
+            var inv = results.invasions[i];
+            batch.push({
+                attacker: { name: inv.attacker, troops: {}, losses: {} },
+                defender: { name: "TQC_SELF", troops: {}, losses: {} },
+                hfStolen: 0,
+                outcome: inv.outcome || "UNKNOWN"
+            });
+        }
+        
+        // Onslaughts - we attacked enemy
+        for (var o = 0; o < results.onslaughts.length; o++) {
+            var ons = results.onslaughts[o];
+            batch.push({
+                attacker: { name: "TQC_SELF", troops: {}, losses: {} },
+                defender: { name: ons.target, troops: {}, losses: {} },
+                hfStolen: 0,
+                outcome: ons.outcome || "UNKNOWN"
+            });
+        }
+
         if (batch.length > 0) {
             NetworkManager.submitBatchReports(batch);
         }
@@ -475,32 +522,41 @@ var MessagerieParser = {
 
     submitReportIntel: function (report) {
         if (typeof NetworkManager === "undefined" || !NetworkManager.isConnected) return;
-        if (!report.attacker) return;
+        if (!report.attacker || !report.defender) return;
 
         var techData = null;
         if (report.techLevels.weapons !== null || report.techLevels.shield !== null) {
             techData = {
-                // In messagerie, the "attacker" is the enemy who attacked us
-                attacker: {
-                    weapons: report.techLevels.weapons,
-                    shield: report.techLevels.shield,
-                    nest: report.techLevels.nest,
-                    dome: null,
-                    confidence: report.techLevels.nest !== null ? "calculated" : "estimated"
-                },
+                attacker: null,
                 defender: null
             };
+            
+            // The enemy is the one whose tech levels we calculated
+            var enemyTech = {
+                weapons: report.techLevels.weapons,
+                shield: report.techLevels.shield,
+                nest: report.techLevels.nest,
+                dome: null,
+                confidence: report.techLevels.nest !== null ? "calculated" : "estimated"
+            };
+            
+            if (report.attacker === "TQC_SELF") {
+                techData.defender = enemyTech;
+            } else {
+                techData.attacker = enemyTech;
+            }
         }
 
         NetworkManager.submitIntelReport({
             attacker: { name: report.attacker, troops: report.attackerTroops, losses: {} },
-            defender: { name: "TQC_SELF", troops: report.defenderTroops, losses: {} },
+            defender: { name: report.defender, troops: report.defenderTroops, losses: {} },
             hfStolen: report.hfStolen,
             outcome: report.outcome,
             techLevels: techData
         });
 
-        HMLogger.info("[Messagerie] Intel submitted for " + report.attacker +
+        var enemyName = report.attacker === "TQC_SELF" ? report.defender : report.attacker;
+        HMLogger.info("[Messagerie] Intel submitted for " + enemyName +
             (report.techLevels.weapons !== null ? " (Weapons " + report.techLevels.weapons + ")" : ""));
     },
 

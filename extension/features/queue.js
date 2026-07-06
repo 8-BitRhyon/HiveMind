@@ -38,6 +38,11 @@ var QueueManager = {
         var btnAdd = document.getElementById("HM_btnAddToQueue");
         if (btnAdd) btnAdd.onclick = () => this.addToQueue();
 
+        var btnAutoAdd = document.getElementById("HM_btnAutoAdd");
+        if (btnAutoAdd && !btnAutoAdd.onclick) {
+            btnAutoAdd.onclick = () => this.autoAddMostMembers();
+        }
+
         var btnNuke = document.getElementById("HM_btnNukeQueue"); // I'll add this to UI
         if (btnNuke) btnNuke.onclick = () => this.nukeStorage();
     },
@@ -153,46 +158,53 @@ var QueueManager = {
             
             // Strategy 1: ID or Class (Most specific)
             var table = doc.getElementById("tabMembresAlliance") || doc.querySelector(".tabMembresAlliance");
-            if(table) {
+            if (table) {
                 memberTable = table;
-                rows = table.querySelectorAll("tbody tr");
-                if(rows.length === 0) rows = table.querySelectorAll("tr");
             }
             
             // Strategy 2: Header-based search (Case-insensitive)
-            if (!rows || rows.length === 0) {
+            if (!memberTable) {
                 var tables = doc.querySelectorAll("table");
                 for (var t of tables) {
                     var text = t.textContent.toLowerCase();
                     if (text.includes("grade") && (text.includes("name") || text.includes("nom") || text.includes("pseudo"))) {
                         memberTable = t;
-                        rows = t.querySelectorAll("tr");
-                        if (rows.length > 1) { // > 1 because 1 is just the header
-                             HMLogger.debug(`[Queue] Found matching table via header text.`);
-                             break;
-                        }
+                        break;
                     }
                 }
             }
             
             // Strategy 3: Heuristic Fallback (CSS classes)
-            if (!rows || rows.length === 0) {
-                var fallbackRows = doc.querySelectorAll("table.tab_triable tr, .boite_classement tr");
-                if (fallbackRows.length > 0) {
-                    rows = fallbackRows;
-                    memberTable = fallbackRows[0].closest("table");
+            if (!memberTable) {
+                var fallbackTable = doc.querySelector("table.tab_triable, table.boite_classement");
+                if (fallbackTable) {
+                    memberTable = fallbackTable;
                 }
             }
             
-            if (!rows || rows.length === 0) {
-                var allRows = doc.querySelectorAll("tr");
-                rows = Array.from(allRows).filter(tr => {
-                    var html = tr.innerHTML;
-                    return html.includes("Membre.php") || html.includes("membre.php");
-                });
-                if (rows.length > 0) {
-                    memberTable = rows[0].closest("table");
+            // Strategy 4: Fallback based on containing membre.php links
+            if (!memberTable) {
+                var allTables = doc.querySelectorAll("table");
+                var bestTable = null;
+                var maxCount = 0;
+                for (var t of allTables) {
+                    var cells = t.querySelectorAll("a[href*='Membre.php'], a[href*='membre.php']");
+                    if (cells.length > maxCount) {
+                        maxCount = cells.length;
+                        bestTable = t;
+                    }
                 }
+                if (bestTable) {
+                    memberTable = bestTable;
+                }
+            }
+
+            if (memberTable) {
+                var rawRows = memberTable.querySelectorAll("tbody tr");
+                if (rawRows.length === 0) rawRows = memberTable.querySelectorAll("tr");
+                rows = Array.from(rawRows).filter(tr => {
+                    return tr.querySelector("a[href*='Membre.php'], a[href*='membre.php'], a[href*='Pseudo='], a[href*='pseudo=']");
+                });
             }
             
             if (!rows || rows.length === 0) {
@@ -225,7 +237,7 @@ var QueueManager = {
         var normalizedCurrent = normalize(currentUser);
 
         // Dynamic Column Detection — search WITHIN the member table, not the global document
-        var colIndices = { grade: 2, name: 3, hf: 5, tech: -1, anthill: -1, fight: -1, state: 9 }; // Defaults
+        var colIndices = { grade: 2, name: 3, hf: 5, tech: -1, anthill: -1, fight: -1, state: 9, alliance: -1 }; // Defaults
         
         // Find the ACTUAL column header row within the same table that contains our data
         var headerRow = null;
@@ -274,8 +286,9 @@ var QueueManager = {
             let logicalIndex = 0;
             headers.forEach((th) => {
                 var txt = th.textContent.toLowerCase().trim();
+                if (txt.includes("alliance")) colIndices.alliance = logicalIndex;
                 if (txt.includes("grade") || txt.includes("rang")) colIndices.grade = logicalIndex;
-                if (txt.includes("pseudo") || txt.includes("joueur") || txt.includes("nom")) colIndices.name = logicalIndex;
+                if (txt.includes("pseudo") || txt.includes("joueur") || txt.includes("nom") || txt.includes("name")) colIndices.name = logicalIndex;
                 if (txt.includes("chasse") || txt.includes("field") || txt.includes("hunting") || txt.includes("terrain")) colIndices.hf = logicalIndex;
                 if (txt.includes("techno") || txt.includes("technology")) colIndices.tech = logicalIndex;
                 if (txt.includes("fourmili") || txt.includes("anthill")) colIndices.anthill = logicalIndex;
@@ -286,37 +299,34 @@ var QueueManager = {
                 var colspan = parseInt(th.getAttribute("colspan") || "1", 10);
                 logicalIndex += colspan;
             });
-            HMLogger.info(`[Queue] Column detection: Name=${colIndices.name}, HF=${colIndices.hf}, Tech=${colIndices.tech}, Anthill=${colIndices.anthill}, Fight=${colIndices.fight}, State=${colIndices.state}`);
+            HMLogger.info(`[Queue] Column detection: Name=${colIndices.name}, HF=${colIndices.hf}, Tech=${colIndices.tech}, Anthill=${colIndices.anthill}, Fight=${colIndices.fight}, State=${colIndices.state}, Alliance=${colIndices.alliance}`);
         } else {
             HMLogger.warn(`[Queue] Could not find column header row! Using defaults. Tech/Anthill will be 0.`);
         }
 
         // Alliance Cross-Referencing Logic
-        // Since alliance.php?Membres only shows our own alliance, we find our alliance tag 
-        // from the cached player rankings and apply it to everyone. If not found, default to TQC.
         var myAllianceTag = "TQC";
+        var isSearchOrGlobal = (colIndices.alliance !== -1); // If there's an alliance column, it's not a single alliance page
         
-        // Check if we're on an enemy alliance page — extract alliance tag from URL
-        var urlParams = new URLSearchParams(window.location.search);
-        var urlAlliance = urlParams.get("alliance");
-        if (urlAlliance) {
-            myAllianceTag = urlAlliance.replace(/\[|\]/g, "").trim();
-            HMLogger.info(`[Queue] Enemy alliance page detected: ${myAllianceTag}`);
-        } else {
-            // Own alliance: cross-reference from cached rankings
-            try {
-                var cachedRankings = JSON.parse(localStorage.getItem("HM_PlayerRankings") || "[]");
-                var me = cachedRankings.find(p => p.name.toLowerCase() === currentUser.toLowerCase());
-                if (me && me.alliance) {
-                    myAllianceTag = me.alliance;
-                    HMLogger.info(`[Queue] Unlocked Alliance Tag via Cross-Reference: ${myAllianceTag}`);
-                } else if (HMState && HMState.User && HMState.User.alliance) {
-                    myAllianceTag = HMState.User.alliance;
-                }
-            } catch(e) {}
+        // If it's a single alliance page, extract from URL
+        if (!isSearchOrGlobal) {
+            var urlParams = new URLSearchParams(window.location.search);
+            var urlAlliance = urlParams.get("alliance");
+            if (urlAlliance) {
+                myAllianceTag = urlAlliance.replace(/\[|\]/g, "").trim();
+                HMLogger.info(`[Queue] Enemy alliance page detected: ${myAllianceTag}`);
+            } else {
+                // Own alliance: cross-reference from cached rankings
+                try {
+                    var cachedRankings = JSON.parse(localStorage.getItem("HM_PlayerRankings") || "[]");
+                    var me = cachedRankings.find(p => p.name.toLowerCase() === currentUser.toLowerCase());
+                    if (me && me.alliance) {
+                        myAllianceTag = me.alliance;
+                    }
+                } catch(e) {}
+            }
         }
         
-        // Normalize: strip square brackets to avoid [TQC] vs TQC discrepancies
         myAllianceTag = myAllianceTag.replace(/\[|\]/g, "").trim();
 
         Array.from(rows).forEach((row, idx) => {
@@ -326,7 +336,7 @@ var QueueManager = {
                 return;
             }
             
-            // Find name and link (Case-insensitive check for common profile patterns)
+            // Find name and link
             var nameLink = row.querySelector("a[href*='Membre.php']") || 
                           row.querySelector("a[href*='membre.php']") ||
                           row.querySelector("a[href*='Pseudo=']") ||
@@ -351,75 +361,62 @@ var QueueManager = {
                 return;
             }
 
-                // Col indices
-                var gradeTd = cells[colIndices.grade];
-                var nameTd = cells[colIndices.name];
-                var fieldTd = cells[colIndices.hf];
-                var techTd = colIndices.tech >= 0 ? cells[colIndices.tech] : null;
-                var anthillTd = colIndices.anthill >= 0 ? cells[colIndices.anthill] : null;
-                var fightTd = colIndices.fight >= 0 ? cells[colIndices.fight] : null;
-                var stateTd = cells[colIndices.state];
-                
-                // Double check if nameTd actually contains the nameLink
-                if (nameTd && !nameTd.contains(nameLink)) {
-                   // Search for the link if it's not in the detected name column
-                   var foundAt = -1;
-                   cells.forEach((c, i) => { if(c.contains(nameLink)) foundAt = i; });
-                   if (foundAt !== -1) {
-                       HMLogger.debug(`[Queue] Corrected name column for row ${idx}: ${foundAt}`);
-                       colIndices.name = foundAt;
-                   }
-                }
+            var getStat = (colIndex) => {
+                if (colIndex < 0 || colIndex >= cells.length) return 0;
+                var text = cells[colIndex].textContent || "";
+                return parseInt(text.replace(/[\s.,]/g, ''), 10) || 0;
+            };
 
-                // Role Emoji
-                var gradeText = gradeTd ? gradeTd.textContent.trim() : "";
-                var roleEmoji = "";
-                var emojis = ["❤️", "🧡", "💛", "💚", "💙", "💜", "🤍", "🎓", "🩷"];
-                for (var e of emojis) { if (gradeText.includes(e)) { roleEmoji = e; break; } }
-
-                // State (Active/Holiday/Inactive)
-                var stateImg = stateTd ? stateTd.querySelector("img") : null;
-                var state = "active";
+            var grade = colIndices.grade >= 0 && cells[colIndices.grade] ? cells[colIndices.grade].textContent.trim() : "";
+            var hf = getStat(colIndices.hf);
+            var tech = getStat(colIndices.tech);
+            var anthill = getStat(colIndices.anthill);
+            var fight = getStat(colIndices.fight);
+            
+            var state = "active";
+            if (colIndices.state >= 0 && cells[colIndices.state]) {
+                var stateImg = cells[colIndices.state].querySelector("img");
                 if (stateImg) {
-                    var alt = (stateImg.alt || stateImg.title || "").toLowerCase();
-                    if (alt.includes("holiday") || alt.includes("vacances")) state = "holiday";
-                    else if (alt.includes("3 days") || alt.includes("3 jours")) state = "inactive_3";
-                    else if (alt.includes("10 days") || alt.includes("10 jours")) state = "inactive_10";
+                    var src = stateImg.getAttribute("src") || "";
+                    if (src.includes("vacances")) state = "vacation";
+                    else if (src.includes("inactif")) state = "inactive";
+                    else if (src.includes("supprime")) state = "deleted";
                 }
+            }
 
-                // HF
-                var hf = 0;
-                if (fieldTd) {
-                    hf = parseInt(fieldTd.textContent.replace(/\s/g, "").replace(/[^0-9]/g, ""), 10) || 0;
+            var playerAlliance = undefined;
+            if (isSearchOrGlobal) {
+                var extAlliance = cells[colIndices.alliance] ? cells[colIndices.alliance].textContent.replace(/\[|\]/g, "").trim() : "";
+                if (extAlliance) {
+                    playerAlliance = extAlliance;
                 }
+                // If it's empty (like broken search results), leave undefined so worker doesn't overwrite
+            } else {
+                playerAlliance = myAllianceTag; // Blanket tag since we're strictly on an alliance page
+            }
 
-                // Tech, Anthill, Fight
-                var tech = 0;
-                if (techTd) {
-                    tech = parseInt(techTd.textContent.replace(/\s/g, "").replace(/[^0-9]/g, ""), 10) || 0;
-                }
-                var anthill = 0;
-                if (anthillTd) {
-                    anthill = parseInt(anthillTd.textContent.replace(/\s/g, "").replace(/[^0-9]/g, ""), 10) || 0;
-                }
-                var fight = 0;
-                if (fightTd) {
-                    fight = parseInt(fightTd.textContent.replace(/\s/g, "").replace(/[^0-9]/g, ""), 10) || 0;
-                }
+            var roleEmoji = "";
+            var emojis = ["❤️", "🧡", "💛", "💚", "💙", "💜", "🤍", "🎓", "🩷"];
+            for (var e of emojis) { if (grade.includes(e)) { roleEmoji = e; break; } }
 
-                parsed.push({
-                    id: playerId,
-                    name: pseudo,
-                    grade: gradeText,
-                    roleEmoji: roleEmoji,
-                    hf: hf,
-                    tech: tech,
-                    anthill: anthill,
-                    fight: fight,
-                    alliance: myAllianceTag,
-                    state: state
-                });
-            });
+            var playerObj = {
+                id: playerId,
+                name: pseudo,
+                grade: grade,
+                roleEmoji: roleEmoji,
+                hf: hf,
+                tech: tech,
+                anthill: anthill,
+                fight: fight,
+                state: state
+            };
+            
+            if (playerAlliance !== undefined) {
+                playerObj.alliance = playerAlliance;
+            }
+
+            parsed.push(playerObj);
+        });
 
             HMLogger.debug(`[Queue] Parsing complete: ${parsed.length} kept, ${totalRows - parsed.length} skipped.`);
 
@@ -633,6 +630,214 @@ var QueueManager = {
         HMToast.success(`Added ${selectedPseudo} to queue (Chain Updated)`);
     },
 
+    autoAddMostMembers: function() {
+        return new Promise((resolve) => {
+            if (this.members.length === 0) {
+                HMToast.warn("No alliance members available. Try fetching them first.");
+                resolve();
+                return;
+            }
+
+            var currentUser = $("#pseudo").text().trim() || 
+                              HMState?.User?.username || 
+                              window.top.document.getElementById("pseudo")?.textContent.trim() || 
+                              "";
+            var normalizedCurrent = currentUser.toLowerCase().trim();
+            var queuedPseudos = new Set(this.queue.map(item => item.pseudo.toLowerCase().trim()));
+
+            var candidates = this.members.filter(m => {
+                if (!m.name) return false;
+                var normName = m.name.toLowerCase().trim();
+                if (normName === normalizedCurrent) return false;
+                if (queuedPseudos.has(normName)) return false;
+                if (m.state) {
+                    var s = m.state.toLowerCase();
+                    if (s === "vacation" || s === "deleted" || s === "holiday") return false;
+                }
+                return true;
+            });
+
+            if (candidates.length === 0) {
+                HMToast.info("All available targets are already in the queue.");
+                resolve();
+                return;
+            }
+
+            // Sort by HF ascending
+            candidates.sort((a, b) => (a.hf || 0) - (b.hf || 0));
+
+            // Load saved exclusions
+            var exclusions = new Set(JSON.parse(localStorage.getItem("HM_AutoAddExclusions") || "[]"));
+
+            // Build HTML for the selection modal
+            var listHtml = `<div style="max-height: 250px; overflow-y: auto; text-align: left; border: 1px solid var(--hm-border); padding: 8px; background: rgba(0,0,0,0.15); margin-bottom: 8px;">`;
+            candidates.forEach((c, index) => {
+                var isExcluded = exclusions.has(c.name.toLowerCase().trim());
+                var checked = !isExcluded ? "checked" : "";
+                var hfCompact = c.hf ? Utils.formatCompact(c.hf) + " HF" : "Unknown HF";
+                listHtml += `
+                    <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.9em; color: var(--hm-text);">
+                        <input type="checkbox" class="hm-autoadd-candidate" data-pseudo="${c.name}" id="cand_${index}" ${checked} style="cursor: pointer;">
+                        <label for="cand_${index}" style="cursor: pointer; display: flex; align-items: center; gap: 4px; flex: 1;">
+                            <span>${c.roleEmoji || ""}</span>
+                            <strong>${c.name}</strong>
+                            <span style="color: var(--hm-muted); font-size: 0.85em;">(${hfCompact})</span>
+                        </label>
+                    </div>
+                `;
+            });
+            listHtml += `</div>`;
+            listHtml += `
+                <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+                    <button type="button" id="HM_BtnSelAllEx" class="hm-btn-small" style="font-size:0.75rem; padding: 2px 6px; cursor: pointer;">Check All</button>
+                    <button type="button" id="HM_BtnDeselAllEx" class="hm-btn-small" style="font-size:0.75rem; padding: 2px 6px; cursor: pointer;">Uncheck All</button>
+                </div>
+                <div style="font-size: 0.8em; color: var(--hm-muted); text-align: left; line-height: 1.4;">
+                    Checked members will be processed by the simulator. Unchecked members are excluded. Selections are saved automatically.
+                </div>
+            `;
+
+            HMUI.confirm("⚡ Auto-Add Candidates", listHtml, async () => {
+                var selectedPseudos = [];
+                var newExclusions = [];
+                
+                document.querySelectorAll(".hm-autoadd-candidate").forEach(input => {
+                    var name = input.getAttribute("data-pseudo");
+                    var nameLower = name.toLowerCase().trim();
+                    if (input.checked) {
+                        selectedPseudos.push(name);
+                    } else {
+                        newExclusions.push(nameLower);
+                    }
+                });
+
+                localStorage.setItem("HM_AutoAddExclusions", JSON.stringify(newExclusions));
+
+                if (selectedPseudos.length === 0) {
+                    HMToast.info("No targets selected.");
+                    resolve();
+                    return;
+                }
+
+                await this.runAutoAddSimulation(selectedPseudos);
+                resolve();
+            });
+
+            // Handle cancel: override the cancel button's onclick to also resolve
+            var btnCancel = document.getElementById("HM_ModalCancel");
+            if (btnCancel) {
+                var originalCancelClick = btnCancel.onclick;
+                btnCancel.onclick = function() {
+                    if (originalCancelClick) originalCancelClick();
+                    resolve();
+                };
+            }
+
+            // Attach Select/Deselect handlers
+            var btnSelAll = document.getElementById("HM_BtnSelAllEx");
+            if (btnSelAll) {
+                btnSelAll.onclick = function() {
+                    document.querySelectorAll(".hm-autoadd-candidate").forEach(input => input.checked = true);
+                };
+            }
+            var btnDeselAll = document.getElementById("HM_BtnDeselAllEx");
+            if (btnDeselAll) {
+                btnDeselAll.onclick = function() {
+                    document.querySelectorAll(".hm-autoadd-candidate").forEach(input => input.checked = false);
+                };
+            }
+        });
+    },
+
+    runAutoAddSimulation: async function(selectedPseudos) {
+        var candidates = selectedPseudos.map(name => this.members.find(m => m.name === name)).filter(Boolean);
+        candidates.sort((a, b) => (a.hf || 0) - (b.hf || 0));
+
+        var runningHF = HMState.User.hf;
+        var runningArmy = [...HMState.Units];
+        
+        var userHFText = $("#chasseur").text() || $("#Hunters").text();
+        if (userHFText) {
+            runningHF = parseInt(userHFText.replace(/[^0-9]/g, "")) || runningHF;
+        }
+
+        var addedTargets = [];
+        HMLogger.info(`[Queue] Running greedy auto-add simulation for ${candidates.length} targets. Starting HF: ${runningHF}`);
+
+        for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            var candHF = candidate.hf || 0;
+            var minRange = runningHF * 0.5;
+            var maxRange = runningHF * 3.0;
+
+            if (candHF < minRange || candHF > maxRange) {
+                HMLogger.debug(`[Queue] Candidate "${candidate.name}" (HF: ${candHF}) out of range [${minRange.toFixed(0)}, ${maxRange.toFixed(0)}]. Skipping.`);
+                continue;
+            }
+
+            var setup = await this.captureCurrentFloodSetup(candidate.name, runningHF, runningArmy);
+            if (!setup || setup.totalAmount === 0 || setup.isPartial === true) {
+                HMLogger.info(`[Queue] Simulation hit army limit or partial flood on "${candidate.name}". Stopping greedy add.`);
+                break;
+            }
+
+            addedTargets.push({
+                pseudo: candidate.name,
+                setup: setup,
+                status: "pending",
+                addedAt: Date.now()
+            });
+
+            // Advance simulation
+            runningHF += setup.totalAmount;
+            if (setup.remainingArmy) {
+                runningArmy = [...setup.remainingArmy];
+            }
+        }
+
+        if (addedTargets.length > 0) {
+            // Sort by travelTime ascending
+            addedTargets.sort((a, b) => (a.setup.travelTime || 0) - (b.setup.travelTime || 0));
+            this.queue = this.queue.concat(addedTargets);
+            await this.recalculateQueueProjections();
+            this.save();
+            this.renderQueue();
+            HMToast.success(`Greedily added ${addedTargets.length} targets to queue.`);
+        } else {
+            HMToast.info("No additional targets could be fully flooded within range.");
+        }
+    },
+
+    playCompletionChime: function() {
+        try {
+            var AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            var ctx = new AudioContext();
+            var now = ctx.currentTime;
+
+            // Arpeggio: C5 (523.25), E5 (659.25), G5 (783.99), C6 (1046.50)
+            var notes = [523.25, 659.25, 783.99, 1046.50];
+            notes.forEach((freq, index) => {
+                var osc = ctx.createOscillator();
+                var gain = ctx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, now + index * 0.08);
+                
+                gain.gain.setValueAtTime(0.1, now + index * 0.08);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.08 + 0.8);
+                
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                
+                osc.start(now + index * 0.08);
+                osc.stop(now + index * 0.08 + 0.8);
+            });
+        } catch (e) {
+            HMLogger.error("Failed to play queue completion chime: " + e.message);
+        }
+    },
+
     /**
      * Simulation Chain Engine:
      * Iterates through the sorted queue and recalculates each target's gain,
@@ -765,7 +970,7 @@ var QueueManager = {
             }
 
             // Capture the depleted army for the NEXT target in the chain
-            setup.remainingArmy = [...HMState.Units]; 
+            setup.remainingArmy = HMState.RemainingUnits ? [...HMState.RemainingUnits] : [...HMState.Units]; 
             
             setup.totalTroopsNeeded = setup.waves.reduce((sum, w) => sum + w.amount, 0);
             setup.isPartial = setup.waves.some(w => w.partial || (w.amount > 0 && !w.success));
@@ -968,21 +1173,79 @@ var QueueManager = {
         HMToast.success(`✅ QUEUE COMPLETE — ${completed}/${total} targets flooded${failed > 0 ? `, ${failed} failed` : ""}`);
         HMLogger.info(`[Queue] Processing finished: ${completed} completed, ${failed} failed out of ${total} targets`);
 
-        // Prominent completion modal
+        this.playCompletionChime();
+
+        // Prominent completion modal with auto-reload countdown
         var targetList = this.queue.map(q => {
             var icon = q.status === "completed" ? "✅" : (q.status === "failed" ? "❌" : "⏭️");
             return `${icon} ${q.pseudo}`;
         }).join("<br>");
 
+        var countdown = 5;
+        var reloadInterval = null;
+        var isCancelled = false;
+
+        var updateModalText = () => {
+            var bodyHtml = `<div style="text-align:center; line-height:2;">` +
+                `<b>${completed}</b> of <b>${total}</b> targets flooded to <span style="color:var(--hm-success, #4CAF50); font-weight:bold;">🌿 Hunting Field</span>` +
+                (failed > 0 ? `<br><span style="color:var(--hm-error, #f44336);">${failed} failed</span>` : "") +
+                `<hr style="border-color:var(--hm-border); opacity:0.3; margin:8px 0;">` +
+                `<div style="text-align:left; font-size:0.9em;">${targetList}</div>` +
+                `<hr style="border-color:var(--hm-border); opacity:0.3; margin:8px 0;">` +
+                `<div>` +
+                (isCancelled 
+                    ? `<span style="color:var(--hm-error, #f44336); font-weight:bold;">Reload cancelled.</span>` 
+                    : `Auto-reloading page in <b id="HM_ReloadCountdown" style="font-family:var(--font-mono); font-size:1.2em;">${countdown}</b> seconds...<br>` +
+                      `<button type="button" id="HM_BtnCancelReload" class="hm-btn-small" style="margin-top:8px; background:var(--hm-error, #f44336); color:#fff; border:none; padding:4px 8px; cursor:pointer; border-radius:3px;">Cancel Reload</button>`
+                ) +
+                `</div>` +
+                `</div>`;
+            
+            var mBody = document.getElementById("HM_ModalBody");
+            if (mBody) {
+                mBody.innerHTML = bodyHtml;
+                
+                var btnCancelReload = document.getElementById("HM_BtnCancelReload");
+                if (btnCancelReload) {
+                    btnCancelReload.onclick = () => {
+                        isCancelled = true;
+                        if (reloadInterval) {
+                            clearInterval(reloadInterval);
+                            reloadInterval = null;
+                        }
+                        updateModalText();
+                    };
+                }
+            }
+        };
+
         HMUI.alert(
             "✅ Queue Complete",
-            `<div style="text-align:center; line-height:2;">` +
-            `<b>${completed}</b> of <b>${total}</b> targets flooded to <span style="color:var(--hm-success); font-weight:bold;">🌿 Hunting Field</span>` +
-            (failed > 0 ? `<br><span style="color:var(--hm-error);">${failed} failed</span>` : "") +
-            `<hr style="border-color:var(--hm-border); opacity:0.3; margin:8px 0;">` +
-            `<div style="text-align:left; font-size:0.9em;">${targetList}</div>` +
-            `</div>`
+            "",
+            () => {
+                if (reloadInterval) {
+                    clearInterval(reloadInterval);
+                    reloadInterval = null;
+                }
+            }
         );
+
+        updateModalText();
+
+        reloadInterval = setInterval(() => {
+            countdown--;
+            var countdownEl = document.getElementById("HM_ReloadCountdown");
+            if (countdownEl) {
+                countdownEl.textContent = countdown;
+            }
+            if (countdown <= 0) {
+                clearInterval(reloadInterval);
+                reloadInterval = null;
+                if (!isCancelled) {
+                    window.location.reload();
+                }
+            }
+        }, 1000);
     },
 
     applyFloodSetup: async function(pseudo, setup) {

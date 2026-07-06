@@ -9,6 +9,8 @@
  */
 
 var RankingScraper = {
+    _observer: null,
+    _debounceTimer: null,
 
     init: function() {
         var path = window.location.pathname.toLowerCase();
@@ -18,7 +20,38 @@ var RankingScraper = {
         if (path.includes("classement2.php")) {
             HMLogger.info("[RankingScraper] Global Ranking page detected, scraping HF data...");
             this.scrapeRankingTable();
+            this.watchForPagination();
         }
+    },
+
+    /**
+     * Watches for XAJAX table swaps triggered by pagination clicks.
+     */
+    watchForPagination: function () {
+        var self = this;
+        var container = document.getElementById("centre") ||
+                        document.getElementById("contenu") ||
+                        document.querySelector("table")?.parentNode;
+        
+        if (!container) return;
+
+        if (this._observer) this._observer.disconnect();
+
+        this._observer = new MutationObserver(function (mutations) {
+            var isRelevant = mutations.some(function (m) {
+                return m.addedNodes.length > 0 || m.removedNodes.length > 0;
+            });
+            if (isRelevant) {
+                clearTimeout(self._debounceTimer);
+                self._debounceTimer = setTimeout(function () {
+                    HMLogger.info("[RankingScraper] Pagination detected — re-scraping...");
+                    self.scrapeRankingTable();
+                }, 500);
+            }
+        });
+
+        this._observer.observe(container, { childList: true, subtree: true });
+        HMLogger.debug("[RankingScraper] Pagination observer installed");
     },
 
     scrapeRankingTable: function() {
