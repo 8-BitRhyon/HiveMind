@@ -270,6 +270,14 @@
   background: var(--hm-error);
   color: var(--hm-white);
 }
+.hm-btn-accent {
+  border-color: var(--hm-accent);
+  color: var(--hm-accent);
+}
+.hm-btn-accent:hover {
+  background: var(--hm-accent);
+  color: var(--hm-white);
+}
 
 /* === Toggle Button === */
 .hm-toggle {
@@ -673,6 +681,18 @@
   margin-bottom: 5px;
   box-sizing: border-box;
   z-index: 100;
+}
+
+.hm-sidebar-box {
+  background: var(--hm-bg);
+  border: 2px solid var(--hm-border);
+  box-sizing: border-box;
+}
+
+.hm-ff-content {
+  padding: 10px 12px;
+  background-color: var(--hm-bg);
+  border-top: 1px solid var(--hm-border);
 }
 
 /* Match game's responsive sidebar alignment (see #boiteComptePlus in game CSS) */
@@ -1115,3 +1135,473 @@
 #HM_ClockContainer {
   margin-top: auto !important;
 }
+
+/* ========================================
+   SERVER MAP
+   ======================================== */
+
+/* Sidebar Button */
+.hm-servermap-btn {
+  background: var(--hm-bg);
+  border: 2px solid var(--hm-border);
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hm-text);
+  transition: filter 0.1s ease, transform 0.1s ease;
+  user-select: none;
+}
+.hm-servermap-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+.hm-servermap-btn-text {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--hm-text);
+  flex: 1;
+}
+.hm-servermap-btn-count {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  min-width: 20px;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+/* Modal Overlay */
+.hm-servermap-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 99999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(3px);
+}
+.hm-servermap-overlay:hover, .hm-servermap-modal:hover {
+  opacity: 1 !important;
+}
+
+/* Modal Container */
+.hm-servermap-modal {
+  background: var(--hm-bg);
+  border: 2px solid var(--hm-border);
+  width: 650px;
+  max-width: 92vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+  animation: hmMapSlideIn 0.25s ease-out;
+}
+.hm-servermap-modal.expanded {
+  width: 98vw;
+  max-width: 98vw;
+  height: 96vh;
+  max-height: 96vh;
+}
+@keyframes hmMapSlideIn {
+  from { transform: scale(0.95) translateY(10px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* Header */
+.hm-servermap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 2px solid var(--hm-border);
+  background: transparent;
+  color: var(--hm-text);
+}
+.hm-servermap-title {
+  font-family: var(--font-mono, 'Space Mono', monospace);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--hm-text);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.hm-servermap-header-actions {
+  display: flex;
+  gap: 6px;
+}
+.hm-servermap-btn-action {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  color: var(--hm-muted);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.hm-servermap-btn-action:hover {
+  border-color: var(--hm-text);
+  color: var(--hm-bg);
+  background: var(--hm-text);
+}
+
+/* Filters */
+.hm-servermap-filters {
+  padding: 12px;
+  border-bottom: 2px solid var(--hm-border);
+  background: var(--hm-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hm-servermap-quickfilters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.hm-servermap-filter-btn {
+  background: transparent;
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 8px 16px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hm-servermap-filter-btn:hover {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+}
+.hm-servermap-filter-btn.active {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+  border-color: var(--hm-text);
+}
+
+/* Alliance-Specific filter colors */
+.hm-servermap-filter-btn.filter-tqc { border-color: #4488ff; color: #4488ff; }
+.hm-servermap-filter-btn.filter-pacts { border-color: #10cc70; color: #10cc70; }
+.hm-servermap-filter-btn.filter-wars { border-color: #ff4444; color: #ff4444; }
+
+.hm-servermap-filter-btn.filter-tqc.active { background: #4488ff; color: #fff; border-color: #4488ff; }
+.hm-servermap-filter-btn.filter-pacts.active { background: #10cc70; color: #fff; border-color: #10cc70; }
+.hm-servermap-filter-btn.filter-wars.active { background: #ff4444; color: #fff; border-color: #ff4444; }
+.hm-servermap-filter-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.hm-servermap-search, 
+.hm-servermap-alliance-select {
+  height: 36px;
+  background: rgba(0,0,0,0.05);
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  padding: 0 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  outline: none;
+  transition: all 0.2s;
+}
+.hm-servermap-search:focus,
+.hm-servermap-alliance-select:focus {
+  border-color: var(--hm-accent);
+  background: rgba(0,0,0,0.08);
+}
+.hm-servermap-search {
+  flex: 1;
+}
+.hm-servermap-alliance-select {
+  width: 200px;
+}
+.hm-servermap-alliance-select {
+  min-width: 140px;
+}
+
+/* Distance Calculator */
+.hm-servermap-dist-calc {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--hm-text);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 10px 14px;
+  border: 1px solid var(--hm-border);
+  border-radius: 4px;
+}
+.hm-servermap-dist-calc span {
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--hm-muted);
+}
+.hm-servermap-input-dist {
+  height: 30px;
+  flex: 1;
+  min-width: 100px;
+  background: var(--hm-bg);
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  padding: 0 10px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.hm-servermap-input-dist:focus {
+  border-color: var(--hm-accent);
+}
+.hm-servermap-input-dist::placeholder {
+  color: var(--hm-muted);
+  opacity: 0.5;
+}
+.hm-servermap-input-spd {
+  width: 55px;
+  height: 30px;
+  background: var(--hm-bg);
+  border: 1px solid var(--hm-border);
+  color: var(--hm-text);
+  padding: 0 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  outline: none;
+  text-align: center;
+  font-weight: 700;
+}
+#HM_DistResult {
+  color: var(--hm-accent);
+  font-size: 15px;
+  font-weight: 900;
+  margin-left: 6px;
+  padding: 2px 8px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+/* Custom Autocomplete */
+.hm-autocomplete-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+}
+.hm-autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  max-height: 200px;
+  background: var(--hm-bg);
+  border: 1px solid var(--hm-border);
+  z-index: 1000;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  border-top: none;
+}
+.hm-autocomplete-item {
+  padding: 8px 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--hm-text);
+  cursor: pointer;
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+  transition: all 0.15s;
+}
+.hm-autocomplete-item:hover, .hm-autocomplete-item.active {
+  background: var(--hm-text);
+  color: var(--hm-bg);
+}
+
+/* HyperChain Graph Container */
+.hm-servermap-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 350px;
+  background: transparent;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 0;
+}
+.hm-servermap-modal.expanded .hm-servermap-canvas-wrap {
+  min-height: unset;
+}
+
+/* Chains Layout (Horizontal banded chunks) */
+.hm-chain-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 0 10px;
+}
+.hm-chain-block {
+  position: relative;
+  width: 100%;
+  height: 120px;
+  background: transparent;
+  border-left: 6px solid var(--hm-border);
+  border-bottom: 2px solid rgba(0,0,0,0.1);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.hm-chain-block-number {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 140px;
+  line-height: 1;
+  font-weight: 900;
+  color: var(--hm-text);
+  opacity: 0.05;
+  pointer-events: none;
+  font-family: var(--font-display), serif;
+  z-index: 1;
+}
+
+/* Individual Player Nodes */
+.hm-player-node {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  z-index: 5;
+  box-shadow: 0 0 4px rgba(0,0,0,0.6);
+  border: 1.5px solid rgba(0,0,0,0.9);
+  transition: opacity 0.2s, filter 0.2s, transform 0.15s ease;
+  cursor: pointer;
+  margin-left: -6px;
+  margin-top: -6px;
+}
+.hm-player-node.hm-hidden {
+  display: none !important;
+}
+.hm-player-node:hover {
+  z-index: 20;
+  transform: scale(1.3);
+  box-shadow: 0 0 15px currentColor;
+  border-color: #fff;
+}
+
+/* Diagonal Player Names */
+.hm-player-label {
+  position: absolute;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
+  color: var(--hm-text);
+  transform: rotate(-45deg); /* Slightly less steep for better reading */
+  transform-origin: bottom left;
+  bottom: calc(100% + 4px);
+  left: 8px;
+  opacity: 0.7; /* Increased from 0.3 */
+  transition: opacity 0.2s, color 0.1s;
+  /* Stronger text shadow for legibility */
+  text-shadow: 
+    2px 2px 0 var(--hm-bg), 
+    -1px -1px 0 var(--hm-bg), 
+    1px -1px 0 var(--hm-bg), 
+    -1px 1px 0 var(--hm-bg),
+    0 0 4px rgba(0,0,0,0.1);
+}
+.hm-chain-block:hover .hm-player-label {
+  opacity: 0.95;
+}
+.hm-player-node:hover .hm-player-label {
+  color: var(--hm-text);
+  opacity: 1;
+  z-index: 21;
+  background: var(--hm-bg);
+  padding: 2px 6px;
+  border: 1px solid var(--hm-border);
+  box-shadow: 4px 4px 0 rgba(0,0,0,0.2);
+  transform: rotate(0deg) translateY(-5px); /* Straighten label on hover */
+}
+
+/* Legend */
+.hm-servermap-legend {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--hm-text);
+  padding: 10px 14px;
+  background: rgba(0,0,0,0.05);
+  border-bottom: 1px solid var(--hm-border);
+}
+.hm-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.hm-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0,0,0,0.8);
+  display: inline-block;
+}
+
+/* Status Bar */
+.hm-servermap-status {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: var(--hm-bg);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--hm-text);
+  border-top: 2px solid var(--hm-border);
+  z-index: 10;
+}
+
+/* Info Panel */
+.hm-servermap-info {
+  padding: 8px 14px;
+  border-top: 1px solid var(--hm-border);
+  background: rgba(0, 0, 0, 0.15);
+}
+.hm-servermap-info-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.hm-servermap-info-coords {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--hm-muted);
+}
+

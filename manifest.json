@@ -2,11 +2,13 @@
   "manifest_version": 3,
   "name": "TQC HiveMind - Flood Calculator",
   "version": "2.51",
+  "update_url": "https://YOUR_ADMIN_SUBDOMAIN.pages.dev/update.xml",
   "description": "Port of Calys Optiflood for TQC Alliance. Calculates optimal flood sequences.",
   "browser_specific_settings": {
     "gecko": {
       "id": "hivemind@rhyonfs.org",
-      "strict_min_version": "109.0"
+      "strict_min_version": "109.0",
+      "update_url": "https://YOUR_ADMIN_SUBDOMAIN.pages.dev/update.json"
     }
   },
   "permissions": ["storage"],
@@ -28,6 +30,7 @@
         "https://*.antzzz.org/*"
       ],
       "js": [
+        "extension/config.js",
         "jquery.min.js",
         "extension/core/compat.js",
         "extension/core/logger.js",
@@ -60,6 +63,8 @@
         "extension/ui/clock.js",
         "extension/ui/theme.js",
         "extension/ui/settings.js",
+        "extension/ui/servermap.js",
+        "extension/features/floodfinder.js",
         "extension/network/network.js",
         "extension/init.js"
       ],

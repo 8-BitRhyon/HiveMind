@@ -14,8 +14,8 @@ var NetworkManager = {
     // CONFIGURATION
     // ===============================================================
     
-    // Cloudflare Worker URL (set after deployment)
-    workerUrl: "https://YOUR_WORKER_SUBDOMAIN.workers.dev",
+    // Cloudflare Worker URL
+    workerUrl: HM_CONFIG.workerUrl,
     
     // ===============================================================
     // STATE
@@ -583,6 +583,25 @@ var NetworkManager = {
         }
     },
 
+    /**
+     * Get the official Council Diplomacy (Categories & Assignments) for the tactical map.
+     * @returns {Object} { categories: [], assignments: {} }
+     */
+    getOfficialDiplomacy: async function() {
+        try {
+            var response = await fetch(this.workerUrl + "/intel/diplomacy/list", {
+                method: "GET",
+                headers: { "Authorization": "Bearer " + this.sessionToken }
+            });
+            
+            if (!response.ok) return { categories: [], assignments: {} };
+            return await response.json();
+        } catch (err) {
+            HMLogger.error("[Network] Official diplomacy fetch error: " + err.message);
+            return { categories: [], assignments: {} };
+        }
+    },
+
     // ===============================================================
     // ALLIANCE RANKINGS
     // ===============================================================
@@ -651,6 +670,53 @@ var NetworkManager = {
         } catch (err) {
             HMLogger.error("[Network] Coordinates network error: " + err.message);
             return false;
+        }
+    },
+
+    /**
+     * Get all shared coordinates from the Worker
+     * Used by ServerMap for daily sync
+     * @returns {Array} [{name, x, y, alliance}, ...]
+     */
+    getCoords: async function() {
+        if (!this.isConnected) return [];
+
+        try {
+            var response = await fetch(this.workerUrl + "/intel/coords/list", {
+                method: "GET",
+                headers: { "Authorization": "Bearer " + this.sessionToken }
+            });
+
+            if (!response.ok) {
+                var errText = await response.text().catch(() => "No body");
+                HMLogger.error("[Network] Server Error " + response.status + " on getCoords: " + errText);
+                return [];
+            }
+            return await response.json();
+        } catch (err) {
+            HMLogger.error("[Network] Coords fetch error: " + err.message);
+            return [];
+        }
+    },
+    /**
+     * Get the designated target list from the worker.
+     * @returns {Array} [{playerName, alliance, status, assignedTo, last_updated}]
+     */
+    getFloodFinder: async function() {
+        if (!this.isConnected) return [];
+
+        try {
+            var response = await fetch(this.workerUrl + "/flood-finder", {
+                method: "GET",
+                headers: { "Authorization": "Bearer " + this.sessionToken }
+            });
+
+            if (!response.ok) return [];
+            var data = await response.json();
+            return data.targets || [];
+        } catch (err) {
+            HMLogger.error("[Network] Flood Finder fetch error: " + err.message);
+            return [];
         }
     }
 };

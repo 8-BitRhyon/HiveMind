@@ -6,6 +6,14 @@
 (function() {
     'use strict';
     
+    // ===== IFRAME GUARD =====
+    // The game loads pages inside iframes. With manifest "all_frames": true,
+    // every script runs in BOTH the top frame and child frames, causing
+    // duplicate UI injection (timers, intel panels, reports, etc.).
+    // Only the top frame should initialize HiveMind features.
+    // QueueManager.scrapeCurrentPage() handles its own iframe detection internally.
+    if (window !== window.top) return;
+    
     console.log("%c[HiveMind] v2.51 Initializing...", "color: #4a9eff; font-weight: bold; font-size: 14px;");
     
     // ===== DEPENDENCY CHECK =====
@@ -85,10 +93,23 @@
         SettingsPanel.init();
     }
     
+    if (typeof ServerMap !== 'undefined') {
+        ServerMap.init();
+    }
+    
+    if (typeof FloodFinder !== 'undefined') {
+        FloodFinder.init();
+    }
+    
     // ===== INITIALIZE NETWORK (Worker Connectivity) =====
     if(typeof NetworkManager !== 'undefined') {
         NetworkManager.init().then(() => {
             HMLogger.debug("NetworkManager initialized");
+            
+            // Trigger FloodFinder to refresh immediately now that NetworkManager is connected
+            if (typeof FloodFinder !== 'undefined') {
+                FloodFinder.refresh();
+            }
             
             // Self-Sync HF: If connected, extract player's own HF from the DOM (Sidebar)
             // Membre.php fails for your own profile due to a game redirect, so we read the native UI.
@@ -216,8 +237,8 @@
             }
         }
         
-        // Auto-scrape enemy alliance member pages (classementAlliance.php?alliance=XXX)
-        if(isAllianceRankingPage && typeof QueueManager !== 'undefined') {
+    // Auto-scrape enemy alliance member pages (classementAlliance.php?alliance=XXX)
+        if(isAllianceRankingPage && window.location.search.includes("alliance=") && typeof QueueManager !== 'undefined') {
             HMLogger.debug("Enemy Alliance page detected — triggering scrape");
             QueueManager.scrapeCurrentPage();
         }
@@ -258,8 +279,11 @@
 
     // Alliance Rankings
     var isClassementPage = path.includes("classement2.php");
+    var isSearchPage = path.includes("classementalliance.php") && window.location.search.toLowerCase().includes("recherche=");
+    var isClassementAlliance = path.includes("classementalliance.php");
     var isAllianceTotal = window.location.search.includes("type_classement=alliance_total");
-    if (isClassementPage) {
+    
+    if (isClassementPage || isSearchPage || isClassementAlliance) {
         if (isAllianceTotal) {
             HMLogger.debug("Alliance Rankings detected");
             if (typeof AllianceRankingsParser !== 'undefined') {

@@ -200,6 +200,7 @@ var HMBuilder = {
                          <option value="">-- Select Alliance Member --</option>
                      </select>
                      <button type="button" id='HM_btnAddToQueue' class="hm-btn hm-btn-success">+ ADD</button>
+                     <button type="button" id='HM_btnAutoAdd' class="hm-btn hm-btn-accent">⚡ AUTO-ADD MOST</button>
                  </div>
                  <div id="HM_QueueContainer" style="margin-top:20px;">
                      <div class="hm-empty">No targets in queue. Load members and add them above.</div>
@@ -559,6 +560,24 @@ var HMBuilder = {
                     await FloodQueueManager.addTarget(name);
                     this.textContent = "+ ADD";
                     sel.selectedIndex = 0;
+                };
+            }
+
+            // Auto-Add Most button
+            var btnAutoAdd = document.getElementById("HM_btnAutoAdd");
+            if (btnAutoAdd) {
+                btnAutoAdd.onclick = async function() {
+                    var originalText = this.textContent;
+                    this.textContent = "Adding...";
+                    this.disabled = true;
+                    try {
+                        await QueueManager.autoAddMostMembers();
+                    } catch (e) {
+                        HMLogger.error("Auto-Add Most failed: " + e.message);
+                    } finally {
+                        this.textContent = originalText;
+                        this.disabled = false;
+                    }
                 };
             }
 
