@@ -2,7 +2,7 @@
  * State Management (admin/js/state.js)
  */
 window.State = {
-    WORKER_URL: "https://YOUR_WORKER_SUBDOMAIN.workers.dev",
+    WORKER_URL: window.HM_CONFIG.WORKER_URL,
     adminSession: null,
     
     // UI State
@@ -21,7 +21,16 @@ window.State = {
         pvp: null,
         glassCannon: null,
         profiler: null,
-        heatmap: null
+        // Phase 1: Data Viz
+        sparkPlayers: null,
+        sparkHF: null,
+        sparkTop: null,
+        sparkTokens: null,
+        powerBalance: null,
+        allianceStacked: null,
+        activityHeatmap: null,
+        // Phase 2: Security
+        securityTimeline: null
     },
 
     // Loaded by warroom.js
@@ -40,8 +49,8 @@ window.State = {
 };
 
 window.CHART_THEME = {
-    font: "'Special Elite', cursive",
-    pixelFont: "'VT323', monospace",
+    font: "'IBM Plex Sans', sans-serif",
+    pixelFont: "'IBM Plex Mono', monospace",
     text: "#d4b896",
     muted: "#9a7a5c",
     accent: "#c9a84c",

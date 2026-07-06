@@ -10,30 +10,67 @@ window.RealmGraph = {
     playerCoords: [],
     currentSourceId: null,
     currentTargetId: null,
+    _themeColors: null,
+    
+    _getTheme: function() {
+        if (!this._themeColors) {
+            const cs = getComputedStyle(document.documentElement);
+            this._themeColors = {
+                fontColor: cs.getPropertyValue('--text-secondary').trim() || '#5c4a3a',
+                bgDark: cs.getPropertyValue('--bg-dark').trim() || '#f0e6d6',
+                accent: cs.getPropertyValue('--accent').trim() || '#c75c3a',
+                border: cs.getPropertyValue('--border').trim() || '#c4b8a8',
+                muted: cs.getPropertyValue('--text-muted').trim() || '#806c59'
+            };
+        }
+        return this._themeColors;
+    },
     
     init: function() {
         const container = document.getElementById('realmMap');
         if (!container) return;
 
         const data = { nodes: this.nodes, edges: this.edges };
+        
+        // Read CSS variables from the active theme
+        const t = this._getTheme();
+        const fontColor = t.fontColor;
+        const bgDark = t.bgDark;
+        const accentColor = t.accent;
+        const borderColor = t.border;
+        const mutedColor = t.muted;
 
         const options = {
             nodes: {
                 shape: 'dot',
                 size: 14,
-                font: { size: 13, color: '#d4b896', strokeWidth: 3, strokeColor: '#0e0805', face: "'Special Elite', cursive" },
+                font: { 
+                    size: 13, 
+                    color: fontColor, 
+                    strokeWidth: 2, 
+                    strokeColor: bgDark, 
+                    face: "'IBM Plex Mono', 'Courier New', monospace"
+                },
+
                 borderWidth: 1.5,
                 borderWidthSelected: 3,
-                shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 8, x: 2, y: 2 }
+                shadow: { enabled: true, color: 'rgba(0,0,0,0.15)', size: 6, x: 2, y: 2 }
             },
             configure: { enabled: false },
             edges: {
-                width: 1,
-                color: { color: 'rgba(201, 168, 76, 0.15)', highlight: '#c9a84c', hover: 'rgba(201,168,76,0.4)' },
+                width: 1.5,
+                color: { color: borderColor + '66', highlight: accentColor, hover: borderColor + '99' },
                 smooth: { type: 'dynamic' },
-                font: { size: 10, color: '#6b4f38', strokeWidth: 0, align: 'middle' },
+                font: { 
+                    size: 10, 
+                    color: accentColor, 
+                    strokeWidth: 0, 
+                    align: 'middle',
+                    face: "'IBM Plex Mono', 'Courier New', monospace"
+                },
                 selectionWidth: 2
             },
+
             physics: {
                 enabled: true,
                 barnesHut: { gravitationalConstant: -8000, centralGravity: 0.3, springLength: 180, springConstant: 0.04, damping: 0.09, avoidOverlap: 0.5 },
@@ -49,24 +86,34 @@ window.RealmGraph = {
         this._fixCanvasDPR = () => {
             const c = container.querySelector('canvas');
             if (!c) return;
-            c.style.background = '#0e0805';
+            const cs2 = getComputedStyle(document.documentElement);
+            c.style.background = cs2.getPropertyValue('--bg-dark').trim() || '#f0e6d6';
             const w = container.clientWidth, h = container.clientHeight;
             if (w > 0 && h > 0) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
         };
         this._fixCanvasDPR();
         
-        const canvasObserver = new MutationObserver(() => {
-            if (container.querySelector('canvas')) { this._fixCanvasDPR(); canvasObserver.disconnect(); }
+        const resizeObserver = new ResizeObserver(() => {
+            if (container.clientWidth > 0 && container.clientHeight > 0) {
+                if (this.network) {
+                    this.network.setSize('100%', '100%');
+                    this.network.redraw();
+                    if (this._fixCanvasDPR) this._fixCanvasDPR();
+                }
+            }
         });
-        canvasObserver.observe(container, { childList: true, subtree: true });
+        resizeObserver.observe(container);
+
 
         this.network.on("stabilizationIterationsDone", () => {
-            this._fixCanvasDPR();
-            this.network.setSize('100%', '100%');
-            this.network.fit({ animation: { duration: 500, easingFunction: "easeInOutQuad" } });
-            this.network.setOptions({ physics: { enabled: false } });
-            this._fixCanvasDPR(); 
+            if (this.network) {
+                this.network.setSize('100%', '100%');
+                this.network.fit({ animation: { duration: 600, easingFunction: "easeInOutQuad" } });
+                this.network.setOptions({ physics: { enabled: false } });
+                if (this._fixCanvasDPR) this._fixCanvasDPR();
+            }
         });
+
 
         this.network.on("afterDrawing", () => { if (this._fixCanvasDPR) this._fixCanvasDPR(); });
 
@@ -83,7 +130,7 @@ window.RealmGraph = {
 
         // UI Listeners
         document.getElementById('realmSpeed')?.addEventListener('input', (e) => {
-            document.getElementById('realmSpeedVal_label').textContent = `Attack Speed: ${e.target.value}`;
+            document.getElementById('realmSpeedVal_label').textContent = `SPD: ${e.target.value}`;
             this.updateTacticalPath();
             if (this.currentSelectedNodeId) this.handleNodeClick(this.currentSelectedNodeId);
         });
@@ -152,7 +199,10 @@ window.RealmGraph = {
             matches.forEach((p, i) => {
                 const div = document.createElement('div');
                 div.className = 'autocomplete-item';
-                div.innerHTML = `<strong>${p.name}</strong> <span style="color:var(--text-muted);font-size:0.85em;">[${p.alliance || 'None'}]</span>`;
+                div.innerHTML = `
+                    <span style="color:var(--accent-glow); font-weight:600;">${p.name}</span>
+                    <span style="color:var(--text-muted); font-size:0.75rem; float:right;">[${p.alliance || 'None'}]</span>
+                `;
                 div.addEventListener('click', () => {
                     input.value = p.name;
                     dropdown.classList.add('hidden');
@@ -160,6 +210,7 @@ window.RealmGraph = {
                 });
                 dropdown.appendChild(div);
             });
+
         };
 
         input.addEventListener('input', (e) => renderList(e.target.value));
@@ -230,17 +281,17 @@ window.RealmGraph = {
                     from: this.currentSourceId,
                     to: this.currentTargetId,
                     label: this.formatFlight(ms),
-                    font: { size: 10, color: '#ffcc00', strokeWidth: 3, strokeColor: '#000', face: 'monospace', align: 'top' },
-                    color: { color: '#ffcc00', opacity: 1 },
-                    width: 2,
+                    font: { size: 11, color: '#c75c3a', strokeWidth: 3, strokeColor: 'rgba(255,255,255,0.8)', face: 'monospace', align: 'top', weight: 'bold' },
+                    color: { color: '#c75c3a', opacity: 1 },
+                    width: 3,
                     dashes: [6, 4],
-                    shadow: { enabled: true, color: 'rgba(255,204,0,0.5)', size: 12 },
+                    shadow: { enabled: true, color: 'rgba(199,92,58,0.5)', size: 10 },
                     smooth: { type: 'curvedCW', roundness: 0.2 } // Subtle curve for tactical feel
                 });
 
                 // Highlight Waypoints
-                this.nodes.update({ id: this.currentSourceId, shadow: { enabled: true, color: '#ffcc00', size: 15 } });
-                this.nodes.update({ id: this.currentTargetId, shadow: { enabled: true, color: '#ffcc00', size: 15 } });
+                this.nodes.update({ id: this.currentSourceId, shadow: { enabled: true, color: 'rgba(199,92,58,0.5)', size: 12 } });
+                this.nodes.update({ id: this.currentTargetId, shadow: { enabled: true, color: 'rgba(199,92,58,0.5)', size: 12 } });
             }
         }
     },
@@ -248,9 +299,9 @@ window.RealmGraph = {
     _resetWaypointStyles: function() {
         // Simple way to reset shadow for all nodes without deep cloning
         const allNodes = this.nodes.get();
-        const updates = allNodes.filter(n => n.shadow && n.shadow.color === '#ffcc00').map(n => ({
+        const updates = allNodes.filter(n => n.shadow && n.shadow.color === 'rgba(199,92,58,0.5)').map(n => ({
             id: n.id,
-            shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 8, x: 2, y: 2 }
+            shadow: { enabled: true, color: 'rgba(0,0,0,0.15)', size: 6, x: 2, y: 2 }
         }));
         if (updates.length > 0) this.nodes.update(updates);
     },
@@ -313,7 +364,7 @@ window.RealmGraph = {
                 x: ((p.x - xMin) / xRange - 0.5) * SPREAD,
                 y: ((p.y - yMin) / yRange - 0.5) * SPREAD,
                 x_coord: p.x, y_coord: p.y,
-                color: { background: color, border: this._darken(color), highlight: { background: color, border: '#e8c46a' }, hover: { background: color, border: '#c9a84c' } }
+                color: { background: color, border: this._darken(color), highlight: { background: color, border: 'var(--accent)' }, hover: { background: color, border: 'var(--border-dark)' } }
             };
         });
 
@@ -328,10 +379,24 @@ window.RealmGraph = {
 
     getAllianceAura: function(allianceName) {
         if (!allianceName || allianceName === "None") return "#777777";
-        const diplo = window.State.diplomacyData || { pacts: [], wars: [] };
-        if (allianceName.toUpperCase() === "TQC") return "#4488ff";
-        if (diplo.pacts.includes(allianceName)) return "#10cc70";
-        if (diplo.wars.includes(allianceName)) return "#ff4444";
+        const d = window.State.diplomacyData || { categories: [], assignments: {} };
+        const tag = allianceName.toUpperCase();
+        
+        // Own alliance special case (if not explicitly assigned)
+        if (tag === "TQC" && !d.assignments[tag]) return "#4488ff";
+
+        // Check new dynamic assignments
+        const assignmentId = d.assignments[tag];
+        if (assignmentId && d.categories) {
+            const cat = d.categories.find(c => c.id === assignmentId);
+            if (cat) return cat.color;
+        }
+
+        // Fallback to legacy structure just in case (transitional)
+        if (d.pacts && d.pacts.includes(allianceName)) return "#10cc70";
+        if (d.wars && d.wars.includes(allianceName)) return "#ff4444";
+
+        // Random hash for others
         let hash = 0;
         for (let i = 0; i < allianceName.length; i++) hash = allianceName.charCodeAt(i) + ((hash << 5) - hash);
         return `hsl(${Math.abs(hash) % 360}, 65%, 50%)`;
@@ -382,13 +447,19 @@ window.RealmGraph = {
         this.edges.clear();
         this._drawTacticalEdge(); // Ensure tactical path is always on top
 
+        const t = this._getTheme();
+        const accentColor = t.accent;
+        const borderColor = t.border;
+        const mutedColor = t.muted;
+        const bgDark = t.bgDark;
+
         const newEdges = top10.map(({ target, time }) => ({
             from: nodeId,
             to: target.id,
             label: this.formatFlight(time),
-            font: { size: 8, align: 'middle', color: '#8b6f48', strokeWidth: 0 },
-            color: { color: 'rgba(201,168,76,0.15)', highlight: '#c9a84c' },
-            width: 0.8,
+            font: { size: 10, align: 'middle', color: accentColor, strokeWidth: 2, strokeColor: bgDark },
+            color: { color: borderColor + '88', highlight: accentColor },
+            width: 1.2,
             length: 150
         }));
         this.edges.add(newEdges);

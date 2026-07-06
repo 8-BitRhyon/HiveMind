@@ -1,43 +1,78 @@
 /**
  * Diplomacy Manager (admin/js/diplomacy.js)
- * Manages war/pact relationships, persists to server + localStorage fallback.
- * Drives Realm Graph node colors and badge rendering across all tabs.
+ * Manages dynamic categories, alliance assignments, discoveries, and audit logs.
  */
 
 window.Diplomacy = {
-
     // ── Persistence ──────────────────────────────────────────────
-    load: async function() {
+    load: async function(forceRefresh = false, bootstrapData = null) {
+        if (bootstrapData) {
+            this.normalizeData(bootstrapData);
+            this.loadDiscoveries();
+            return;
+        }
+
         try {
+            const headers = { "Authorization": `Bearer ${window.State.adminSession.token}` };
+            if (forceRefresh) headers["X-Force-Refresh"] = "true";
+            
             const res = await window.fetchCached(
                 `${window.State.WORKER_URL}/admin/diplomacy`,
-                { headers: { "Authorization": `Bearer ${window.State.adminSession.token}` } },
+                { headers },
                 60000
             );
             const data = res.ok ? await res.json() : null;
             if (data) {
-                window.State.diplomacyData = data;
-                // Merge notes from localStorage (notes are local-only)
-                const localNotes = localStorage.getItem("HM_DiploNotes");
-                if (localNotes) window.State.diplomacyData.notes = localNotes;
+                this.normalizeData(data);
+                this.loadDiscoveries();
                 return;
             }
-        } catch(e) { console.warn("[Diplomacy] Server load failed, using local fallback"); }
+        } catch(e) { console.warn("[Diplomacy] Server load failed, using local fallback", e); }
 
         // Fallback to localStorage
-        const local = localStorage.getItem("HM_Diplomacy");
+        const local = localStorage.getItem("HM_Diplomacy_New");
         if (local) {
-            window.State.diplomacyData = JSON.parse(local);
+            this.normalizeData(JSON.parse(local));
         } else {
-            window.State.diplomacyData = { pacts: [], wars: [] };
+            this.normalizeData({});
         }
+        this.loadDiscoveries();
+    },
+
+    loadDiscoveries: async function() {
+        try {
+            const res = await window.fetchCached(
+                `${window.State.WORKER_URL}/intel/diplomacy/discovery`,
+                { headers: { "Authorization": `Bearer ${window.State.adminSession.token}` } },
+                60000
+            );
+            if (res.ok) {
+                window.State.diplomacyDiscoveries = await res.json();
+                this.renderDiscoveries();
+            }
+        } catch(e) { console.warn("[Diplomacy] Discoveries load failed", e); }
+    },
+
+    normalizeData: function(data) {
+        // Handle legacy data or empty states
+        const defaultCats = [
+            { id: "sisters", name: "Sisters", color: "#00ffff" },
+            { id: "pacts", name: "Ally", color: "#10cc70" },
+            { id: "naps", name: "NAP", color: "#ffd700" },
+            { id: "wars", name: "War", color: "#ff4444" }
+        ];
+
+        window.State.diplomacyData = {
+            categories: (data.categories && data.categories.length > 0) ? data.categories : defaultCats,
+            assignments: data.assignments || {},
+            audit: data.audit || []
+        };
     },
 
     save: async function() {
         const d = window.State.diplomacyData;
-        // Always save locally
-        localStorage.setItem("HM_Diplomacy", JSON.stringify({ pacts: d.pacts, wars: d.wars }));
-        // Try to push to server
+        localStorage.setItem("HM_Diplomacy_New", JSON.stringify(d));
+        
         try {
             await window.fetch(`${window.State.WORKER_URL}/admin/diplomacy`, {
                 method: "POST",
@@ -45,198 +80,269 @@ window.Diplomacy = {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${window.State.adminSession.token}`
                 },
-                body: JSON.stringify({ pacts: d.pacts, wars: d.wars })
+                body: JSON.stringify(d)
             });
-        } catch(e) { /* offline — local save is enough */ }
+            // Force reload to get matching ETags / update timestamp
+            await this.load(true);
+        } catch(e) { console.warn("[Diplomacy] Post failed", e); }
     },
 
-    addWar: async function(name) {
-        if (!name || !name.trim()) return;
-        name = name.trim().toUpperCase();
+    logAudit: function(action, target, detail) {
         const d = window.State.diplomacyData;
-        if (d.wars.includes(name)) return;
-        d.pacts = d.pacts.filter(p => p !== name); // Can't be both
-        d.wars.push(name);
-        await this.save();
-        this.render();
+        const ign = window.State.adminSession ? window.State.adminSession.ign : "Admin";
+        d.audit.unshift({
+            ts: Date.now(),
+            admin: ign,
+            action: action,
+            target: target,
+            detail: detail
+        });
+        // Keep last 100
+        if (d.audit.length > 100) d.audit.pop();
     },
 
-    removeWar: async function(name) {
-        window.State.diplomacyData.wars = window.State.diplomacyData.wars.filter(w => w !== name);
-        await this.save();
-        this.render();
-    },
-
-    addPact: async function(name) {
+    // ── Category Management ──────────────────────────────────────
+    addCategory: async function(name, color) {
         if (!name || !name.trim()) return;
-        name = name.trim().toUpperCase();
+        const id = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
         const d = window.State.diplomacyData;
-        if (d.pacts.includes(name)) return;
-        d.wars = d.wars.filter(w => w !== name); // Can't be both
-        d.pacts.push(name);
+        if (d.categories.find(c => c.id === id)) return;
+        
+        d.categories.push({ id, name: name.trim(), color });
+        this.logAudit("add_category", name, color);
         await this.save();
         this.render();
     },
 
-    removePact: async function(name) {
-        window.State.diplomacyData.pacts = window.State.diplomacyData.pacts.filter(p => p !== name);
+    removeCategory: async function(id) {
+        const d = window.State.diplomacyData;
+        const cat = d.categories.find(c => c.id === id);
+        if (!cat || id === "pacts" || id === "wars") return; // Keep base required categories safely if needed, but let's allow anything.
+        
+        d.categories = d.categories.filter(c => c.id !== id);
+        // Unassign anyone in this category
+        for (const [tag, catId] of Object.entries(d.assignments)) {
+            if (catId === id) delete d.assignments[tag];
+        }
+        
+        this.logAudit("remove_category", cat.name, "");
+        await this.save();
+        this.render();
+    },
+
+    // ── Assignments ──────────────────────────────────────────────
+    setAssignment: async function(tag, categoryId) {
+        if (!tag || !tag.trim()) return;
+        tag = tag.trim().toUpperCase();
+        const d = window.State.diplomacyData;
+        
+        const oldCat = d.assignments[tag];
+        if (oldCat === categoryId) return;
+
+        if (categoryId === "") {
+            delete d.assignments[tag];
+            this.logAudit("remove_assignment", tag, oldCat || 'none');
+        } else {
+            d.assignments[tag] = categoryId;
+            const newCatName = d.categories.find(c => c.id === categoryId)?.name || categoryId;
+            this.logAudit("set_assignment", tag, newCatName);
+        }
+        
         await this.save();
         this.render();
     },
 
     // ── Rendering ─────────────────────────────────────────────────
     render: function() {
-        const d = window.State.diplomacyData || { pacts: [], wars: [] };
+        // Defensive initialization
+        if (!window.State.diplomacyData) window.State.diplomacyData = { categories: [], assignments: {} };
+        const d = window.State.diplomacyData;
+        if (!d.categories) d.categories = [];
+        if (!d.assignments) d.assignments = {};
 
-        // Wars list
-        const warsList = document.getElementById("warsList");
-        if (warsList) {
-            warsList.innerHTML = d.wars.length === 0
-                ? '<span style="font-size:0.85em; color:var(--text-muted)">No active wars.</span>'
-                : d.wars.map(w => `
-                    <div class="diplo-tag diplo-war">
-                        <span>${window.escapeHtml(w)}</span>
-                        <button class="diplo-remove" data-type="war" data-name="${window.escapeHtml(w)}" title="Remove">&times;</button>
-                    </div>`).join("");
+        // 1. Categories
+        const catContainer = document.getElementById("diploCategories");
+        if (catContainer) {
+            catContainer.innerHTML = d.categories.map(c => `
+                <div style="display:flex; align-items:center; padding: 6px 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-dark);">
+                    <div style="width: 14px; height: 14px; background: ${c.color}; border-radius: 50%; margin-right: 10px; box-shadow: 0 0 4px ${c.color};"></div>
+                    <span style="flex:1; font-weight:bold; color:var(--text-primary);">${window.escapeHtml(c.name)}</span>
+                    <button class="btn-danger diplo-btn-rm-cat" data-id="${c.id}" style="padding:2px 6px; font-size:0.7em;">Delete</button>
+                </div>
+            `).join("");
         }
 
-        // Pacts list
-        const pactsList = document.getElementById("pactsList");
-        if (pactsList) {
-            pactsList.innerHTML = d.pacts.length === 0
-                ? '<span style="font-size:0.85em; color:var(--text-muted)">No active pacts.</span>'
-                : d.pacts.map(p => `
-                    <div class="diplo-tag diplo-pact">
-                        <span>${window.escapeHtml(p)}</span>
-                        <button class="diplo-remove" data-type="pact" data-name="${window.escapeHtml(p)}" title="Remove">&times;</button>
-                    </div>`).join("");
-        }
+        // 2. Discoveries
+        this.renderDiscoveries();
 
-        // Notes
-        const notesEl = document.getElementById("diploNotes");
-        if (notesEl && !notesEl._userEditing) {
-            notesEl.value = d.notes || "";
-        }
-
-        // Realm legend diplo summary
-        const summary = document.getElementById("diploSummary");
-        if (summary) {
-            const warLine = d.wars.length > 0 ? `<div><span style="color:#c05050;letter-spacing:0.06em;">WAR:</span> ${d.wars.join(", ")}</div>` : "";
-            const pactLine = d.pacts.length > 0 ? `<div><span style="color:#6ab055;letter-spacing:0.06em;">PACT:</span> ${d.pacts.join(", ")}</div>` : "";
-            summary.innerHTML = warLine + pactLine || '<span style="color:var(--text-muted);font-style:italic;">None established.</span>';
-        }
-
-        // Update the profiler filter and intelAllianceFilter to include diplo status
+        // 3. Ledger
         this.renderDiploTable();
 
-        // Refresh graph colors if realm is active
+        // 4. Audit Log
+        this.renderAudit();
+
+        // Refresh graph colors if realm is active (though we'd need to adapt realm graph to categories later)
         if (window.RealmGraph && window.RealmGraph.network) {
             window.RealmGraph.render();
         }
+    },
+
+    renderDiscoveries: function() {
+        const discContainer = document.getElementById("diploDiscoveries");
+        if (!discContainer) return;
+        
+        const disc = window.State.diplomacyDiscoveries;
+        if (!disc || (!disc.pacts?.length && !disc.wars?.length)) {
+            discContainer.innerHTML = '<span style="font-size:0.85em; color:var(--text-muted)">No recent discoveries from the field.</span>';
+            return;
+        }
+
+        const d = window.State.diplomacyData || { categories: [], assignments: {} };
+        const timeAgo = disc.timestamp ? window.timeAgo(disc.timestamp) : "unknown time";
+        const submittedBy = disc.submittedBy || "unknown";
+
+        let html = `<div style="font-size:0.8em; color:var(--text-muted); margin-bottom:8px;">Source: <strong>${window.escapeHtml(submittedBy)}</strong> (${timeAgo})</div>`;
+        
+        let items = [];
+        (disc.pacts || []).forEach(tag => {
+            if (!d.assignments[tag]) items.push({ tag, type: 'Pact' });
+        });
+        (disc.wars || []).forEach(tag => {
+             if (!d.assignments[tag]) items.push({ tag, type: 'War' });
+        });
+
+        if (items.length === 0) {
+            discContainer.innerHTML = '<span style="font-size:0.85em; color:var(--text-muted)">All recent discoveries have already been assigned.</span>';
+            return;
+        }
+
+        html += items.map(item => `
+            <div style="display:flex; align-items:center; padding: 6px; background: rgba(0,0,0,0.2); border: 1px dashed var(--border-dark);">
+                <span style="flex:1;"><strong>[${window.escapeHtml(item.tag)}]</strong> reported as ${item.type}</span>
+                <button class="btn-chart diplo-btn-assign" data-tag="${window.escapeHtml(item.tag)}" style="padding:2px 6px;">Assign...</button>
+            </div>
+        `).join("");
+
+        discContainer.innerHTML = html;
+    },
+    
+    renderAudit: function() {
+        const container = document.getElementById("diploAuditLog");
+        if (!container) return;
+        const audit = window.State.diplomacyData?.audit || [];
+        if (audit.length === 0) {
+            container.innerHTML = '<span style="color:var(--text-muted)">No activity recorded.</span>';
+            return;
+        }
+        container.innerHTML = audit.map(a => `
+            <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--text-muted);">
+                <span style="color:var(--accent-glow)">[${window.formatDate ? window.formatDate(a.ts) : new Date(a.ts).toLocaleString()}]</span>
+                <strong style="color:var(--text-primary)">${window.escapeHtml(a.admin)}</strong>: 
+                <span style="color:var(--accent)">${a.action}</span> 
+                on <strong>${window.escapeHtml(a.target)}</strong> 
+                ${a.detail ? `<span style="font-size:0.9em;">(${window.escapeHtml(a.detail)})</span>` : ""}
+            </div>
+        `).join("");
     },
 
     renderDiploTable: function() {
         const tbody = document.getElementById("diploTableBody");
         if (!tbody) return;
 
-        const d = window.State.diplomacyData || { pacts: [], wars: [] };
+        const d = window.State.diplomacyData || { categories: [], assignments: {} };
+        if (!d.categories) d.categories = [];
+        if (!d.assignments) d.assignments = {};
+        
         const alliances = window.State.allianceHistoryData;
+        const searchInput = document.getElementById("diploSearchInput")?.value.toLowerCase().trim() || "";
+        const filterSelect = document.getElementById("diploFilterSelect")?.value || "ALL";
+
         if (!alliances || alliances.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Load Alliance Rankings first.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Load Alliance Rankings first.</td></tr>';
             return;
         }
 
-        const latest = alliances[0].data || [];
-        tbody.innerHTML = latest.map(a => {
-            const isTQC  = a.name === "TQC";
-            const isWar  = d.wars.includes(a.name);
-            const isPact = d.pacts.includes(a.name);
-
-            let status = '<span style="color:var(--text-muted)">Neutral</span>';
-            if (isTQC)   status = '<span style="color:#c9a84c; font-weight:bold">[ HOME ]</span>';
-            else if (isWar)  status = '<span style="color:#c05050;letter-spacing:0.06em;">WAR</span>';
-            else if (isPact) status = '<span style="color:#6ab055;letter-spacing:0.06em;">PACT</span>';
-
-            let actions = "";
-            if (!isTQC) {
-                if (isWar)  actions = `<button class="btn-danger diplo-table-remove" data-type="war"  data-name="${window.escapeHtml(a.name)}">Remove War</button>`;
-                else if (isPact) actions = `<button class="btn-danger diplo-table-remove" data-type="pact" data-name="${window.escapeHtml(a.name)}">Remove Pact</button>`;
-                else actions = `
-                    <button class="btn-chart diplo-set" data-type="war"  data-name="${window.escapeHtml(a.name)}" title="Mark as War" style="width:auto;padding:3px 8px;font-size:0.75em;color:#e74c3c;border-color:rgba(139,26,26,0.4);">War</button>
-                    <button class="btn-chart diplo-set" data-type="pact" data-name="${window.escapeHtml(a.name)}" title="Mark as Pact" style="width:auto;padding:3px 8px;font-size:0.75em;color:#2ecc71;border-color:rgba(46,120,46,0.4);margin-left:4px;">Pact</button>`;
+        const latest = alliances[alliances.length - 1].data || [];
+        
+        const rows = latest.filter(a => {
+            const tag = a.name.toUpperCase();
+            if (searchInput && !tag.toLowerCase().includes(searchInput)) return false;
+            if (filterSelect === "ASSIGNED" && !d.assignments[tag]) return false;
+            return true;
+        }).map(a => {
+            const tag = a.name.toUpperCase();
+            const currentAssignment = d.assignments[tag] || "";
+            let color = "var(--text-primary)";
+            
+            if (currentAssignment) {
+                const cat = d.categories.find(c => c.id === currentAssignment);
+                if (cat) color = cat.color;
+            } else if (tag === "TQC") {
+                color = "#4488ff"; // Hardcoded default for own alliance visually if missing
             }
+
+            // Build options list for this specific row
+            const optionsHtml = [`<option value="" ${currentAssignment === "" ? "selected" : ""}>-- Neutral --</option>`]
+                .concat(d.categories.map(c => `<option value="${c.id}" ${c.id === currentAssignment ? "selected" : ""}>${window.escapeHtml(c.name)}</option>`))
+                .join("");
 
             return `<tr>
                 <td>#${a.rank}</td>
-                <td style="font-weight:${isTQC?'bold':'normal'}; color:${isTQC?'#c9a84c':isWar?'#c05050':isPact?'#6ab055':'var(--text-primary)'}">
+                <td style="font-weight:bold; color:${color}; font-family: var(--font-mono);">
                     ${window.escapeHtml(a.name)}
                 </td>
                 <td>${window.formatCompact(a.hf)}</td>
                 <td>${a.members}</td>
-                <td>${status}</td>
-                <td>${actions}</td>
+                <td>
+                    <label for="assign_${window.escapeHtml(a.name)}" class="sr-only">Assignment for ${window.escapeHtml(a.name)}</label>
+                    <select id="assign_${window.escapeHtml(a.name)}" name="assign_${window.escapeHtml(a.name)}" class="diplo-row-select" data-tag="${window.escapeHtml(a.name)}" style="padding:4px; max-width: 150px; background:var(--bg-input); border:1px solid var(--border-dark); color:var(--text-primary);">
+                        ${optionsHtml}
+                    </select>
+                </td>
             </tr>`;
-        }).join("");
+        });
+
+        tbody.innerHTML = rows.length ? rows.join("") : '<tr><td colspan="5" class="loading-cell">No matching alliances found.</td></tr>';
     },
 
     initListeners: function() {
-        // Add war
-        document.getElementById("addWarBtn")?.addEventListener("click", () => {
-            const val = document.getElementById("newWarInput")?.value;
-            this.addWar(val);
-            if (document.getElementById("newWarInput")) document.getElementById("newWarInput").value = "";
-        });
-        document.getElementById("newWarInput")?.addEventListener("keypress", (e) => {
-            if (e.key === "Enter") document.getElementById("addWarBtn")?.click();
-        });
-
-        // Add pact
-        document.getElementById("addPactBtn")?.addEventListener("click", () => {
-            const val = document.getElementById("newPactInput")?.value;
-            this.addPact(val);
-            if (document.getElementById("newPactInput")) document.getElementById("newPactInput").value = "";
-        });
-        document.getElementById("newPactInput")?.addEventListener("keypress", (e) => {
-            if (e.key === "Enter") document.getElementById("addPactBtn")?.click();
-        });
-
-        // Notes save
-        document.getElementById("saveDiploNotes")?.addEventListener("click", () => {
-            const notes = document.getElementById("diploNotes")?.value || "";
-            window.State.diplomacyData.notes = notes;
-            localStorage.setItem("HM_DiploNotes", notes);
-            const btn = document.getElementById("saveDiploNotes");
-            if (btn) { btn.textContent = "Saved"; setTimeout(() => { btn.textContent = "Save Notes"; }, 1500); }
-        });
-        document.getElementById("diploNotes")?.addEventListener("focus", function() { this._userEditing = true; });
-        document.getElementById("diploNotes")?.addEventListener("blur",  function() { this._userEditing = false; });
-
-        // Event delegation for tag remove buttons and table actions
-        document.getElementById("warsList")?.addEventListener("click", (e) => {
-            const btn = e.target.closest(".diplo-remove");
-            if (btn && btn.dataset.type === "war") this.removeWar(btn.dataset.name);
-        });
-        document.getElementById("pactsList")?.addEventListener("click", (e) => {
-            const btn = e.target.closest(".diplo-remove");
-            if (btn && btn.dataset.type === "pact") this.removePact(btn.dataset.name);
-        });
-        document.getElementById("diploTableBody")?.addEventListener("click", (e) => {
-            const rm = e.target.closest(".diplo-table-remove");
-            if (rm) {
-                if (rm.dataset.type === "war")  this.removeWar(rm.dataset.name);
-                if (rm.dataset.type === "pact") this.removePact(rm.dataset.name);
-            }
-            const set = e.target.closest(".diplo-set");
-            if (set) {
-                if (set.dataset.type === "war")  this.addWar(set.dataset.name);
-                if (set.dataset.type === "pact") this.addPact(set.dataset.name);
+        // Categories Configuration
+        document.getElementById("addCatBtn")?.addEventListener("click", () => {
+            const nameEl = document.getElementById("newCatName");
+            const colorEl = document.getElementById("newCatColor");
+            if (nameEl && colorEl) {
+                this.addCategory(nameEl.value, colorEl.value);
+                nameEl.value = "";
             }
         });
 
-        // Profiler filter 2
-        document.getElementById("intelAllianceFilter2")?.addEventListener("change", (e) => {
-            if (window.State.hfDataSnapshot) {
-                window.renderProfilerChart(window.State.hfDataSnapshot, e.target.value);
+        document.getElementById("diploCategories")?.addEventListener("click", (e) => {
+            const btn = e.target.closest(".diplo-btn-rm-cat");
+            if (btn) this.removeCategory(btn.dataset.id);
+        });
+
+        // Ledger Filters
+        document.getElementById("diploSearchInput")?.addEventListener("input", () => this.renderDiploTable());
+        document.getElementById("diploFilterSelect")?.addEventListener("change", () => this.renderDiploTable());
+
+        // Ledger Assignments (Event Delegation)
+        document.getElementById("diploTableBody")?.addEventListener("change", (e) => {
+            if (e.target.classList.contains("diplo-row-select")) {
+                this.setAssignment(e.target.dataset.tag, e.target.value);
+            }
+        });
+
+        // Discoveries (Event Delegation)
+        document.getElementById("diploDiscoveries")?.addEventListener("click", (e) => {
+            const btn = e.target.closest(".diplo-btn-assign");
+            if (btn) {
+                // Focus the search input to bring them to the ledger row immediately
+                const searchEl = document.getElementById("diploSearchInput");
+                if (searchEl) {
+                    searchEl.value = btn.dataset.tag;
+                    this.renderDiploTable();
+                    searchEl.focus();
+                }
             }
         });
     }

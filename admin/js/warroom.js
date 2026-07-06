@@ -43,27 +43,34 @@ window.renderAnomalyFeed = function() {
 
     container.innerHTML = anomalies.map(a => {
         const isDrop  = a.pct < 0;
+        const absPct  = Math.abs(a.pct);
         const pctStr  = (isDrop ? "" : "+") + (a.pct * 100).toFixed(1) + "%";
         const diffStr = window.formatCompact(Math.abs(a.diff));
-        const isTQC   = (a.alliance || "").toUpperCase() === "TQC";
-        const severity = Math.abs(a.pct) > 0.5 ? "anomaly-critical" : isDrop ? "anomaly-drop-card" : "anomaly-spike-card";
-        const icon = isDrop ? "▼" : "▲";
+        
+        let badgeClass = "info";
+        let badgeText = "INFO";
+        if (absPct >= 0.5) {
+            badgeClass = "critical";
+            badgeText = "CRITICAL";
+        } else if (absPct >= 0.2) {
+            badgeClass = "warning";
+            badgeText = "WARNING";
+        }
+
+        const roster = window.State.tqcRoster || [];
+        const isTqc = roster.length > 0 ? roster.some(m => m.toLowerCase() === a.name?.toLowerCase()) : (a.alliance || "").toUpperCase() === "TQC";
         const reason = isDrop
-            ? (isTQC ? "TQC member under attack? Verify garrison before counter." : "Possible enemy attack or voluntary transfer.")
+            ? (isTqc ? "TQC member under attack? Verify garrison before counter." : "Possible enemy attack or voluntary transfer.")
             : "Large HF spike — possible Flood received or active farming.";
 
         return `
-        <div class="anomaly-card ${severity}">
-            <div class="anomaly-header">
-                <span class="anomaly-name">${window.escapeHtml(a.name)}</span>
-                <span class="anomaly-alliance">[${window.escapeHtml(a.alliance || "—")}]</span>
-                <span class="anomaly-pct ${isDrop ? 'delta-down' : 'delta-up'}">${icon} ${pctStr} (${isDrop ? '-' : '+'}${diffStr} HF)</span>
-            </div>
-            <div class="anomaly-detail">${reason}</div>
-            <div class="anomaly-values">
-                <span>Before: <strong>${window.formatCompact(a.prevHF)}</strong></span>
-                <span>After: <strong>${window.formatCompact(a.hf)}</strong></span>
-            </div>
+        <div class="anomaly-item">
+            <span class="anomaly-badge ${badgeClass}">${badgeText}</span>
+            <span class="anomaly-player">${window.escapeHtml(a.name)}</span>
+            <span class="anomaly-detail">
+                <span class="${isDrop ? 'delta-down' : 'delta-up'}">${isDrop ? '▼' : '▲'} ${pctStr} (${isDrop ? '-' : '+'}${diffStr} HF)</span>
+                — ${reason}
+            </span>
         </div>`;
     }).join("");
 };
@@ -78,8 +85,15 @@ window.renderContributionChart = function() {
     const container = document.getElementById("contributionTable");
     if (!container || !window.State.hfDataSnapshot) return;
 
+    const roster = window.State.tqcRoster || [];
     const tqcMembers = window.State.hfDataSnapshot
-        .filter(p => (p.alliance || "").toUpperCase() === "TQC")
+        .filter(p => {
+            const isTqcTagged = (p.alliance || "").toUpperCase() === "TQC";
+            const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+            // If roster is populated, it acts as the master list (exclusive).
+            // If roster is empty, fall back to automated scraper tags.
+            return roster.length > 0 ? isRostered : isTqcTagged;
+        })
         .sort((a, b) => a.hf - b.hf); // LOW → HIGH intentional for chain planning
 
     if (tqcMembers.length === 0) {
