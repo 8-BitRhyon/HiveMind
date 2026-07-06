@@ -14,6 +14,47 @@
 // - ALLIANCE_KEY: The secret key for authentication
 // - HIVEMIND_KV: KV namespace binding
 
+/// ===============================================================
+// SECURITY HELPERS (OWASP & Rate Limiting)
+// ===============================================================
+
+async function constantTimeCompare(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const enc = new TextEncoder();
+    // Use SHA-256 to normalize lengths and prevent interpreter short-circuiting
+    const hashA = await crypto.subtle.digest("SHA-256", enc.encode(a));
+    const hashB = await crypto.subtle.digest("SHA-256", enc.encode(b));
+    const arrA = new Uint8Array(hashA);
+    const arrB = new Uint8Array(hashB);
+    let result = 0;
+    for (let i = 0; i < arrA.length; i++) {
+        result |= (arrA[i] ^ arrB[i]);
+    }
+    return result === 0 && a.length === b.length;
+}
+
+async function rateLimit(request, env, key_prefix, limit = 10, windowSeconds = 60) {
+    const ip = request.headers.get("CF-Connecting-IP") || "anonymous";
+    const key = `rl:${key_prefix}:${ip}`;
+    const now = Math.floor(Date.now() / 1000);
+    const windowStart = now - windowSeconds;
+
+    // Get current rate data
+    let data = await env.HIVEMIND_KV.get(key, { type: "json" }) || { count: 0, firstSeen: now };
+    
+    // Reset if window has passed
+    if (data.firstSeen < windowStart) {
+        data = { count: 1, firstSeen: now };
+    } else {
+        data.count++;
+    }
+
+    // Update KV (set expiration to clear old limits)
+    await env.HIVEMIND_KV.put(key, JSON.stringify(data), { expirationTtl: windowSeconds * 2 });
+
+    return data.count > limit;
+}
+
 // ===============================================================
 // CRYPTOGRAPHIC JWT HELPERS (Web Crypto API)
 // ===============================================================
@@ -90,6 +131,8 @@ export default {
         const method = request.method;
 
         // CORS — Restrict to known origins (OWASP A05)
+        // NOTE: Game sites serve over HTTP only — extension injects on those pages.
+        // Admin panel is HTTPS-only.
         const ALLOWED_ORIGINS = [
             "http://s1.antzzz.org",
             "http://s2.antzzz.org",
@@ -99,6 +142,10 @@ export default {
             "https://s2.antzzz.org",
             "https://s3.antzzz.org",
             "https://www.antzzz.org",
+            "http://s1.fourmizzz.fr",
+            "http://s2.fourmizzz.fr",
+            "http://s3.fourmizzz.fr",
+            "http://www.fourmizzz.fr",
             "https://s1.fourmizzz.fr",
             "https://s2.fourmizzz.fr",
             "https://s3.fourmizzz.fr",
@@ -106,7 +153,11 @@ export default {
             "https://hivemind-admin.pages.dev"
         ];
         const requestOrigin = request.headers.get("Origin") || "";
-        const allowedOrigin = ALLOWED_ORIGINS.includes(requestOrigin) ? requestOrigin : ALLOWED_ORIGINS[0];
+        const isAllowed = ALLOWED_ORIGINS.includes(requestOrigin) || 
+                          requestOrigin.startsWith("http://localhost:") || 
+                          requestOrigin.startsWith("http://127.0.0.1:") || 
+                          requestOrigin === "null";
+        const allowedOrigin = isAllowed ? requestOrigin : "null";
 
         const corsHeaders = {
             "Access-Control-Allow-Origin": allowedOrigin,
@@ -114,16 +165,24 @@ export default {
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
         };
 
-
-
         // Handle preflight
         if (method === "OPTIONS") {
             return new Response(null, { status: 204, headers: corsHeaders });
         }
 
+        // Fast rejection for disallowed origins (except direct server requests without Origin headers)
+        if (requestOrigin && !isAllowed) {
+            return new Response("CORS Origin Not Allowed", { status: 403 });
+        }
+
         try {
-            // Route: POST /auth
+            // Route: POST /auth (OWASP A07: Identification and Authentication Failures)
             if (path === "/auth" && method === "POST") {
+                // Rate limit authentication attempts
+                const isRateLimited = await rateLimit(request, env, "auth", 10, 60);
+                if (isRateLimited) {
+                    return jsonResponse({ error: "Too many attempts. Chill out." }, 429, corsHeaders);
+                }
                 return await handleAuth(request, env, corsHeaders);
             }
 
@@ -140,11 +199,15 @@ export default {
             }
 
             // Route: GET /intel/:id (legacy — OWASP A01: now requires auth)
-            if (path.startsWith("/intel/") && !path.startsWith("/intel/player/") && !path.startsWith("/intel/report") && method === "GET") {
-                const targetId = path.split("/")[2];
-                return await withPlayerAuth(request, env, corsHeaders, (req, e, c) => 
-                    withCache(req, e, ctx, c, (r, env_r, c_r) => handleGetPlayerIntel(targetId, env_r, c_r))
-                );
+            const legacyMatch = path.match(/^\/intel\/([a-zA-Z0-9_\-\.\s]+)$/);
+            if (legacyMatch && method === "GET") {
+                const targetId = decodeURIComponent(legacyMatch[1]);
+                const reservedPaths = ["list", "batch", "report", "reports", "diplomacy", "alliances", "coords", "player"];
+                if (!reservedPaths.includes(targetId.toLowerCase())) {
+                    return await withPlayerAuth(request, env, corsHeaders, (req, e, c) => 
+                        withCache(req, e, ctx, c, (r, env_r, c_r) => handleGetPlayerIntel(r, targetId, env_r, c_r))
+                    );
+                }
             }
 
             // Route: POST /lock (OWASP A01 — now requires auth)
@@ -184,6 +247,23 @@ export default {
                 );
             }
 
+            // ===== IAM (Identity & Access Management) ROUTES =====
+
+            // Route: GET /admin/iam/admins (Root Only)
+            if (path === "/admin/iam/admins" && method === "GET") {
+                return await withSuperAdminAuth(request, env, corsHeaders, handleListAdmins);
+            }
+
+            // Route: POST /admin/iam/admins (Root Only)
+            if (path === "/admin/iam/admins" && method === "POST") {
+                return await withSuperAdminAuth(request, env, corsHeaders, handleAddAdmin);
+            }
+
+            // Route: DELETE /admin/iam/admins (Root Only)
+            if (path === "/admin/iam/admins" && method === "DELETE") {
+                return await withSuperAdminAuth(request, env, corsHeaders, handleRevokeAdmin);
+            }
+
             // ===== INTEL ROUTES =====
 
             // Route: POST /intel/report - Submit parsed combat report
@@ -214,10 +294,21 @@ export default {
                 return await withPlayerAuth(request, env, corsHeaders, handleIntelDiplomacy);
             }
 
+            // Route: GET /intel/diplomacy/list - Fetch official Council diplomacy
+            if (path === "/intel/diplomacy/list" && method === "GET") {
+                return await withPlayerAuth(request, env, corsHeaders, (req, e, c) => 
+                    withCache(req, e, ctx, c, handleGetDiplomacy)
+                );
+            }
+
             // ===== ADMIN ROUTES =====
             
             // Route: POST /admin/auth
             if (path === "/admin/auth" && method === "POST") {
+                const isRateLimited = await rateLimit(request, env, "admin_auth", 5, 300);
+                if (isRateLimited) {
+                    return await jsonResponse({ error: "Too many admin attempts. IP locked out for 5 minutes." }, 429, corsHeaders);
+                }
                 return await handleAdminAuth(request, env, corsHeaders);
             }
 
@@ -244,6 +335,16 @@ export default {
                 return await withAdminAuth(request, env, corsHeaders, (req, e, c) => 
                     withCache(req, e, ctx, c, handleGetLogs)
                 );
+            }
+
+            // Route: GET /admin/roster
+            if (path === "/admin/roster" && method === "GET") {
+                return await withAdminAuth(request, env, corsHeaders, handleGetRoster);
+            }
+
+            // Route: POST /admin/roster
+            if (path === "/admin/roster" && method === "POST") {
+                return await withAdminAuth(request, env, corsHeaders, handlePostRoster);
             }
 
             // Route: GET /admin/economy
@@ -274,6 +375,18 @@ export default {
                 );
             }
 
+            // Route: POST /admin/diplomacy
+            if (path === "/admin/diplomacy" && method === "POST") {
+                return await withAdminAuth(request, env, corsHeaders, handlePostDiplomacy);
+            }
+
+            // Route: GET /intel/diplomacy/discovery
+            if (path === "/intel/diplomacy/discovery" && method === "GET") {
+                return await withAdminAuth(request, env, corsHeaders, (req, e, c) => 
+                    withCache(req, e, ctx, c, handleGetDiplomacyDiscovery)
+                );
+            }
+
             // Route: GET /admin/players/history - Player Rankings historical snapshots
             if (path === "/admin/players/history" && method === "GET") {
                 return await withAdminAuth(request, env, corsHeaders, (req, e, c) => 
@@ -298,11 +411,34 @@ export default {
                 );
             }
 
+            // Route: GET /intel/coords/list - Player-auth accessible coords (for extension ServerMap)
+            if (path === "/intel/coords/list" && method === "GET") {
+                return await withPlayerAuth(request, env, corsHeaders, (req, e, c) => 
+                    withCache(req, e, ctx, c, handleGetCoords)
+                );
+            }
+
+            // Route: GET /flood-finder - Targets for extension
+            if (path === "/flood-finder" && method === "GET") {
+                return await withPlayerAuth(request, env, corsHeaders, handleGetFloodFinder);
+            }
+
+            // Route: GET /admin/flood-finder - Management fetch
+            if (path === "/admin/flood-finder" && method === "GET") {
+                return await withAdminAuth(request, env, corsHeaders, handleGetFloodFinder);
+            }
+
+            // Route: POST /admin/flood-finder - Management update
+            if (path === "/admin/flood-finder" && method === "POST") {
+                return await withAdminAuth(request, env, corsHeaders, handlePostFloodFinder);
+            }
+
             // 404
             return await jsonResponse({ error: "Not found" }, 404, corsHeaders);
 
         } catch (err) {
-            return await jsonResponse({ error: err.message }, 500, corsHeaders);
+            console.error("Worker 500 Error:", err.stack || err.message || err);
+            return await jsonResponse({ error: err.message, stack: err.stack }, 500, corsHeaders);
         }
     }
 };
@@ -319,20 +455,67 @@ async function handleAuth(request, env, corsHeaders) {
         return await jsonResponse({ error: "Missing ign or key" }, 400, corsHeaders);
     }
 
-    // OWASP A07 — Rate Limiting (5 attempts per 5 minutes per IP)
     const clientIP = request.headers.get("CF-Connecting-IP") || "unknown";
+
+    // SECURITY UPDATE: Account-based lockout per IGN
+    const lockoutKey = `lockout::ign::${ign.toLowerCase()}`;
+    const lockedUntil = parseInt(await env.HIVEMIND_KV.get(lockoutKey) || "0");
+    if (Date.now() < lockedUntil) {
+        return await jsonResponse({ error: "Account temporarily locked due to repeated failures." }, 423, corsHeaders);
+    }
+
+    // OWASP A07 — Rate Limiting (5 attempts per 5 minutes per IP)
     const rateKey = `rate::auth::${clientIP}`;
     const attempts = parseInt(await env.HIVEMIND_KV.get(rateKey) || "0");
     if (attempts >= 5) {
         await logEvent(env, "auth_rate_limited", { ip: clientIP, ign });
         return await jsonResponse({ error: "Too many attempts. Try again in 5 minutes." }, 429, corsHeaders);
     }
-    // Validate Individualized UUID Tokens
+
+    // 1. Check Root Access (Super Admin)
+    if (env.ROOT_KEY && await constantTimeCompare(key, env.ROOT_KEY)) {
+        const payload = {
+            ign: ign,
+            role: "root",
+            iat: Math.floor(Date.now() / 1000),
+            exp: Date.now() + (12 * 60 * 60 * 1000) // 12hr root session
+        };
+        const token = await signJWT(payload, env.ALLIANCE_KEY);
+        await logEvent(env, "auth_success_root", { ign, ip: clientIP });
+        return await jsonResponse({ token, ign, role: "root" }, 200, corsHeaders);
+    }
+
+    // 2. Check Admin Access (Individual Admin Keys)
+    const adminKeyData = await env.HIVEMIND_KV.get(`iam::admins::${key}`, { type: "json" });
+    if (adminKeyData) {
+        const payload = {
+            ign: ign,
+            role: "admin",
+            iat: Math.floor(Date.now() / 1000),
+            exp: Date.now() + (24 * 60 * 60 * 1000) // 24hr admin session
+        };
+        const token = await signJWT(payload, env.ALLIANCE_KEY);
+        await logEvent(env, "auth_success_admin", { ign, ip: clientIP });
+        return await jsonResponse({ token, ign, role: "admin" }, 200, corsHeaders);
+    }
+
+    // 3. Validate Individualized Player Tokens
     const tokenKey = `token::${key}`;
     const tokenDataStr = await env.HIVEMIND_KV.get(tokenKey);
 
     if (!tokenDataStr) {
-        // Increment rate limit on failure
+        // Track consecutive failures for account lockout
+        const failKey = `fails::ign::${ign.toLowerCase()}`;
+        const fails = parseInt(await env.HIVEMIND_KV.get(failKey) || "0") + 1;
+        if (fails >= 5) {
+            await env.HIVEMIND_KV.put(lockoutKey, String(Date.now() + 900000)); // 15 min lockout
+            await env.HIVEMIND_KV.delete(failKey);
+            await logEvent(env, "auth_account_locked", { ign, ip: clientIP });
+        } else {
+            await env.HIVEMIND_KV.put(failKey, String(fails), { expirationTtl: 3600 });
+        }
+
+        // Increment rate limit on failure (IP-based)
         await env.HIVEMIND_KV.put(rateKey, String(attempts + 1), { expirationTtl: 300 });
         // OWASP A09 — Log failed auth attempts
         await logEvent(env, "auth_failure", { ign, reason: "invalid_token", ip: clientIP });
@@ -341,12 +524,17 @@ async function handleAuth(request, env, corsHeaders) {
         return await jsonResponse({ error: "Invalid or Revoked Token" }, 401, corsHeaders);
     }
 
+    // Reset failure counter on success
+    await env.HIVEMIND_KV.delete(`fails::ign::${ign.toLowerCase()}`);
+
     const tokenData = JSON.parse(tokenDataStr);
 
     // Verify the Token belongs strictly to the requested IGN
-    if (tokenData.ign.toLowerCase() !== ign.toLowerCase()) {
+    // SECURITY UPDATE: Using constantTimeCompare to prevent timing leaks on IGN metadata
+    const isOwner = await constantTimeCompare(tokenData.ign.toLowerCase(), ign.toLowerCase());
+    if (!isOwner) {
         await env.HIVEMIND_KV.put(rateKey, String(attempts + 1), { expirationTtl: 300 });
-        await logEvent(env, "auth_ign_mismatch", { attempted_ign: ign, owner_ign: tokenData.ign });
+        await logEvent(env, "auth_ign_mismatch", { attempted_ign: ign, owner_ign: tokenData.ign, ip: clientIP });
         return await jsonResponse({ error: "Token does not belong to this IGN" }, 403, corsHeaders);
     }
 
@@ -364,6 +552,7 @@ async function handleAuth(request, env, corsHeaders) {
     const sessionPayload = {
         ign: tokenData.ign,
         role: tokenData.role || "member",
+        tid: key, // Token ID for real-time revocation check
         exp: Date.now() + 86400000 // 24 hours
     };
     
@@ -401,6 +590,8 @@ async function handleIntelSubmit(request, env, corsHeaders) {
 
     return await jsonResponse({ success: true }, 200, corsHeaders);
 }
+
+
 
 async function handleIntelGet(targetId, env, corsHeaders) {
     const intelKey = `intel::${targetId}`;
@@ -628,7 +819,8 @@ async function handleIntelReport(request, env, corsHeaders) {
             player: attacker.name,
             role: "attacker",
             troops: attacker.troops || {},
-            losses: attacker.losses || {}
+            losses: attacker.losses || {},
+            tech: techLevels?.attacker || null
         });
     }
     if (defender?.name) {
@@ -642,10 +834,10 @@ async function handleIntelReport(request, env, corsHeaders) {
     }
 
     const globalKey = "intel::combat_reports";
-    let allReports = {};
+    let allReports = Object.create(null);
     const raw = await env.HIVEMIND_KV.get(globalKey);
     if (raw) {
-        try { allReports = JSON.parse(raw); } catch(e) { allReports = {}; }
+        try { allReports = JSON.parse(raw); } catch(e) { allReports = Object.create(null); }
     }
 
     for (const entry of entries) {
@@ -699,7 +891,7 @@ async function handleBatchReports(request, env, corsHeaders) {
     const now = Date.now();
 
     // Group all report entries by player name (in-memory)
-    const playerReports = {}; // { playerKey: [{ role, troops, losses, tech, hfStolen, outcome, by, ts }] }
+    const playerReports = Object.create(null); // { playerKey: [{ role, troops, losses, tech, hfStolen, outcome, by, ts }] }
 
     for (const report of reports) {
         const { attacker, defender, hfStolen, outcome, techLevels } = report;
@@ -738,11 +930,11 @@ async function handleBatchReports(request, env, corsHeaders) {
     // O(1) Unified Combat Reports Cache
     let updated = 0;
     const globalKey = "intel::combat_reports";
-    let allReports = {};
+    let allReports = Object.create(null);
     
     const raw = await env.HIVEMIND_KV.get(globalKey);
     if (raw) {
-        try { allReports = JSON.parse(raw); } catch(e) { allReports = {}; }
+        try { allReports = JSON.parse(raw); } catch(e) { allReports = Object.create(null); }
     }
 
     for (const [playerKey, newEntries] of Object.entries(playerReports)) {
@@ -825,7 +1017,7 @@ async function handleBatchIntel(request, env, corsHeaders) {
         const oldEntry = globalRankings[targetId];
         const entry = {
             name: playerStats.name,
-            alliance: playerStats.alliance || (oldEntry ? oldEntry.alliance : ""),
+            alliance: playerStats.alliance !== undefined ? playerStats.alliance : (oldEntry ? oldEntry.alliance : ""),
             rank: playerStats.rank || (oldEntry ? oldEntry.rank : 0),
             hf: playerStats.hf || (oldEntry ? oldEntry.hf : 0),
             tech: playerStats.tech || (oldEntry ? oldEntry.tech : 0),
@@ -872,13 +1064,14 @@ async function handleBatchIntel(request, env, corsHeaders) {
             if (p.name) {
                 let old = mergedMap.get(p.name.toLowerCase());
                 if (old) {
-                    // Inherit old non-zero values when new payload has 0
+                    // Inherit old non-zero values when new payload has 0 or is missing
                     if (p.hf === 0 && old.hf > 0) p.hf = old.hf;
                     if (p.tech === 0 && old.tech > 0) p.tech = old.tech;
                     if (p.anthill === 0 && old.anthill > 0) p.anthill = old.anthill;
                     if (p.fight === 0 && old.fight > 0) p.fight = old.fight;
                     if (p.rank === 0 && old.rank > 0) p.rank = old.rank;
-                    if (!p.alliance && old.alliance) p.alliance = old.alliance;
+                    // Removed: if (!p.alliance && old.alliance) p.alliance = old.alliance;
+                    // If p.alliance is undefined/empty, it means they are currently unaligned or not in this scrape.
                 }
                 mergedMap.set(p.name.toLowerCase(), p);
             }
@@ -1200,36 +1393,63 @@ async function handleIntelAlliances(request, env, corsHeaders) {
     const historyKey = `stats::alliances::history`;
     const now = Date.now();
     
-    // Store latest array
+    // 1. Merge with existing "latest" data to accumulate pages
+    let existingLatest = { data: [] };
+    const latestStr = await env.HIVEMIND_KV.get(latestKey);
+    if (latestStr) {
+        try { existingLatest = JSON.parse(latestStr); } catch(e) {}
+    }
+
+    // Use a Map for O(1) lookups during merge
+    const allianceMap = new Map();
+    // Populate with existing data
+    (existingLatest.data || []).forEach(a => allianceMap.set(a.name, a));
+    // Overwrite/Add with new data
+    list.forEach(a => allianceMap.set(a.name, a));
+
+    // Convert back to array and sort by rank (ascending)
+    const mergedData = Array.from(allianceMap.values()).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+
     const snapshot = {
         timestamp: now,
-        count: list.length,
-        data: list
+        count: mergedData.length,
+        data: mergedData
     };
     
     await env.HIVEMIND_KV.put(latestKey, JSON.stringify(snapshot));
 
-    // Append to History
+    // 2. Update History
     let history = [];
     const historyData = await env.HIVEMIND_KV.get(historyKey);
     if (historyData) {
         try { history = JSON.parse(historyData); } catch(e) {}
     }
     
-    // Add current snapshot to front of history
-    history.unshift(snapshot);
-    
-    // Cap at 60 snapshots (e.g. 2 months of daily, or 60 hours of hourly)
-    if (history.length > 60) {
-        history = history.slice(0, 60);
+    // If the latest history entry is "fresh" (e.g. < 10 mins old), merge into it
+    // instead of creating a new snapshot. This handles page-by-page scraping.
+    const FRESH_THRESHOLD = 10 * 60 * 1000;
+    if (history.length > 0 && (now - history[0].timestamp) < FRESH_THRESHOLD) {
+        const hSnap = history[0];
+        const hMap = new Map();
+        (hSnap.data || []).forEach(a => hMap.set(a.name, a));
+        list.forEach(a => hMap.set(a.name, a));
+        hSnap.data = Array.from(hMap.values()).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+        hSnap.count = hSnap.data.length;
+        hSnap.timestamp = now; // Update timestamp to newest
+    } else {
+        // Create a new snapshot but initialize it with the cumulative state 
+        // to ensure history charts don't 'dip' if only one page is scraped.
+        history.unshift(snapshot);
     }
     
+    // Cap history
+    if (history.length > 60) history = history.slice(0, 60);
     await env.HIVEMIND_KV.put(historyKey, JSON.stringify(history));
 
     // Log the event
     await logEvent(env, "intel_alliances", { count: list.length });
 
-    return await jsonResponse({ success: true, stored: list.length }, 200, corsHeaders);
+    return await jsonResponse({ success: true, stored: mergedData.length }, 200, corsHeaders);
 }
 
 async function handleGetAlliances(request, env, corsHeaders) {
@@ -1297,17 +1517,37 @@ async function handleIntelCoords(request, env, corsHeaders) {
 async function handleGetCoords(request, env, corsHeaders) {
     const key = `intel::coords`;
     const dataStr = await env.HIVEMIND_KV.get(key);
-    const data = dataStr ? JSON.parse(dataStr) : {};
+    let data = {};
+    try { data = dataStr ? JSON.parse(dataStr) : {}; } catch(e) {}
     
     // Join with latest rankings to ensure alliance names are accurate and up-to-date
     const rankStr = await env.HIVEMIND_KV.get("intel::rankings_batch");
-    const rankings = rankStr ? JSON.parse(rankStr) : {};
+    let rankings = {};
+    try { rankings = rankStr ? JSON.parse(rankStr) : {}; } catch(e) {}
     
+    // Fetch manual roster to ensure map consistency
+    const rosterStr = await env.HIVEMIND_KV.get("stats::tqc::roster");
+    let roster = { members: [] };
+    try { if (rosterStr) roster = JSON.parse(rosterStr); } catch(e) {}
+    const hasRoster = roster.members && roster.members.length > 0;
+
     const merged = Object.values(data).map(p => {
-        const rankInfo = rankings[p.name.toLowerCase()];
+        const nameKey = p.name ? p.name.toLowerCase() : "";
+        const rankInfo = nameKey ? rankings[nameKey] : null;
+        let alliance = rankInfo ? rankInfo.alliance : "None";
+
+        // Roster Enforcement for Map & Coords
+        if (hasRoster) {
+            if (roster.members.includes(p.name)) {
+                alliance = "TQC";
+            } else if (alliance.toUpperCase() === "TQC") {
+                alliance = "None";
+            }
+        }
+
         return {
             ...p,
-            alliance: rankInfo ? rankInfo.alliance : "None"
+            alliance
         };
     });
 
@@ -1325,22 +1565,25 @@ async function handleIntelDiplomacy(request, env, corsHeaders) {
         return await jsonResponse({ error: "Invalid data payload" }, 400, corsHeaders);
     }
 
-    const key = `intel::diplomacy`;
-
-    // Overwrite with latest parsed state
+    const key = `intel::diplomacy_discovery`;
+    
+    // Instead of overriding the official diplomacy, we record this as a discovery
+    // We can merge with existing or just overwrite if we consider it a point-in-time scrape.
+    // For simplicity, overwrite the latest discovery payload.
     await env.HIVEMIND_KV.put(key, JSON.stringify({
         timestamp: Date.now(),
         pacts: data.pacts,
-        wars: data.wars
+        wars: data.wars,
+        submittedBy: request.user ? request.user.ign : 'unknown'
     }));
 
-    await logEvent(env, "intel_diplomacy", { pactsCount: data.pacts.length, warsCount: data.wars.length });
+    await logEvent(env, "intel_diplomacy_discovery", { pactsCount: data.pacts.length, warsCount: data.wars.length });
 
     return await jsonResponse({ success: true }, 200, corsHeaders);
 }
 
-async function handleGetDiplomacy(request, env, corsHeaders) {
-    const key = `intel::diplomacy`;
+async function handleGetDiplomacyDiscovery(request, env, corsHeaders) {
+    const key = `intel::diplomacy_discovery`;
     const dataStr = await env.HIVEMIND_KV.get(key);
 
     if (!dataStr) {
@@ -1348,6 +1591,71 @@ async function handleGetDiplomacy(request, env, corsHeaders) {
     }
 
     return await jsonResponse(JSON.parse(dataStr), 200, corsHeaders, request);
+}
+
+async function handleGetDiplomacy(request, env, corsHeaders) {
+    const key = `intel::diplomacy`;
+    const dataStr = await env.HIVEMIND_KV.get(key);
+
+    if (!dataStr) {
+        // Return default structured data
+        return await jsonResponse({ 
+            timestamp: 0, 
+            categories: [
+                { id: "sisters", name: "Sister Alliance", color: "#00ffff" },
+                { id: "pacts", name: "Pacts", color: "#10cc70" },
+                { id: "naps", name: "NAPs", color: "#ffd700" },
+                { id: "wars", name: "Wars", color: "#ff4444" }
+            ],
+            assignments: {},
+            audit: []
+        }, 200, corsHeaders, request);
+    }
+
+    return await jsonResponse(JSON.parse(dataStr), 200, corsHeaders, request);
+}
+
+async function handlePostDiplomacy(request, env, corsHeaders) {
+    const payload = await request.json();
+    
+    // Sanitize and validate payload
+    // Expected structure: { action: 'update_categories', categories: [...] } or { action: 'set_assignment', target: 'TAG', category: 'sisters' }
+    // To support full save from the UI, we can also accept { categories: [...], assignments: {...}, audit: [...] }
+    
+    // For simplicity, let's accept a full state overwrite from the admin panel
+    if (!payload || !payload.categories || !payload.assignments) {
+        // Support legacy save style momentarily to not break existing panel before it's refreshed.
+        if (payload.pacts && payload.wars) {
+            return await jsonResponse({ error: "Legacy format no longer supported. Please refresh your Admin Panel." }, 400, corsHeaders);
+        }
+        return await jsonResponse({ error: "Invalid data payload" }, 400, corsHeaders);
+    }
+
+    const key = `intel::diplomacy`;
+    
+    await env.HIVEMIND_KV.put(key, JSON.stringify({
+        timestamp: Date.now(),
+        categories: payload.categories,
+        assignments: payload.assignments,
+        audit: payload.audit || []
+    }));
+
+    // Log individual change to the global Activity Log
+    let logDetail = "Updated diplomacy configuration";
+    if (payload.audit && payload.audit.length > 0) {
+        const last = payload.audit[0];
+        if (last.action === 'set_assignment') logDetail = `Assigned ${last.target} to ${last.detail}`;
+        else if (last.action === 'remove_assignment') logDetail = `Removed ${last.target} assignment`;
+        else if (last.action === 'add_category') logDetail = `Created category: ${last.target}`;
+        else if (last.action === 'remove_category') logDetail = `Deleted category: ${last.target}`;
+    }
+
+    await logEvent(env, "admin_diplomacy_update", { 
+        admin: request.user ? request.user.ign : 'unknown',
+        detail: logDetail
+    });
+
+    return await jsonResponse({ success: true }, 200, corsHeaders);
 }
 
 // ===============================================================
@@ -1423,23 +1731,71 @@ async function handleAdminAuth(request, env, corsHeaders) {
     const body = await request.json();
     const { adminKey } = body;
 
-    if (!adminKey || adminKey !== env.ADMIN_KEY) {
-        await logEvent(env, "admin_auth_failure", { ip: request.headers.get("CF-Connecting-IP") });
+    // SECURITY UPDATE: Account-based lockout for the Admin credential
+    const lockoutKey = "lockout::admin";
+    const lockedUntil = parseInt(await env.HIVEMIND_KV.get(lockoutKey) || "0");
+    if (Date.now() < lockedUntil) {
+        return await jsonResponse({ error: "Admin access temporarily locked due to repeated failures." }, 423, corsHeaders);
+    }
+
+    // 1. Check Root Access
+    if (env.ROOT_KEY && await constantTimeCompare(adminKey, env.ROOT_KEY)) {
+        const payload = { ign: "Root", role: "root", exp: Date.now() + 86400000 };
+        const token = await signJWT(payload, env.ALLIANCE_KEY);
+        await logEvent(env, "admin_auth_success_root", { ip: request.headers.get("CF-Connecting-IP") || "unknown" });
+        return await jsonResponse({ token, ign: "Root", role: "root" }, 200, corsHeaders);
+    }
+
+    // 2. Check Individual Admin Keys
+    const adminData = await env.HIVEMIND_KV.get(`iam::admins::${adminKey}`, { type: "json" });
+    if (adminData) {
+        const payload = { ign: adminData.ign, role: "admin", exp: Date.now() + 86400000 };
+        const token = await signJWT(payload, env.ALLIANCE_KEY);
+        await logEvent(env, "admin_auth_success_individual", { ign: adminData.ign });
+        return await jsonResponse({ token, ign: adminData.ign, role: "admin" }, 200, corsHeaders);
+    }
+
+    // 3. Legacy Global Admin Key
+    const isLegacyValid = await constantTimeCompare(adminKey, env.ADMIN_KEY);
+    if (!adminKey || !isLegacyValid) {
+        const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+        
+        // Track consecutive failures for lockout
+        const failKey = "fails::admin";
+        const fails = parseInt(await env.HIVEMIND_KV.get(failKey) || "0") + 1;
+        if (fails >= 5) {
+            await env.HIVEMIND_KV.put(lockoutKey, String(Date.now() + 900000)); // 15 min lockout
+            await env.HIVEMIND_KV.delete(failKey);
+            await logEvent(env, "admin_lockout", { ip });
+        } else {
+            await env.HIVEMIND_KV.put(failKey, String(fails), { expirationTtl: 3600 });
+        }
+
+        await logEvent(env, "admin_auth_failure", { ip });
+        // Intentional delay to further frustrate automated brute-force
+        await new Promise(r => setTimeout(r, 1000));
         return await jsonResponse({ error: "Invalid admin key" }, 401, corsHeaders);
     }
 
-    // Generate admin session token
-    const token = crypto.randomUUID();
-    const session = {
+    // Reset failure counter on success
+    await env.HIVEMIND_KV.delete("fails::admin");
+
+    // Secure HMAC-SHA256 Session Token Generation (JWT paradigm)
+    const sessionPayload = {
+        ign: "CouncilAdmin",
         role: "admin",
-        created_at: Date.now(),
         exp: Date.now() + 86400000 // 24 hours
     };
     
-    await env.HIVEMIND_KV.put(`admin_session::${token}`, JSON.stringify(session), { expirationTtl: 86400 });
-    await logEvent(env, "admin_auth_success", {});
+    // Use the same signing secret as player auth for unified verification
+    const token = await signJWT(sessionPayload, env.ALLIANCE_KEY);
+    await logEvent(env, "admin_auth_success", { ign: "CouncilAdmin" });
 
-    return await jsonResponse({ token }, 200, corsHeaders);
+    return await jsonResponse({ 
+        token, 
+        ign: "CouncilAdmin", 
+        role: "admin" 
+    }, 200, corsHeaders);
 }
 
 /**
@@ -1495,14 +1851,97 @@ async function withAdminAuth(request, env, corsHeaders, handler) {
     }
 
     const token = authHeader.split(" ")[1];
-    const session = await env.HIVEMIND_KV.get(`admin_session::${token}`);
+    
+    // OWASP A02 FIX — Verify HMAC-SHA256 signature
+    const session = await verifyJWT(token, env.ALLIANCE_KEY);
     
     if (!session) {
-        return await jsonResponse({ error: "Invalid or expired session" }, 401, corsHeaders);
+        return await jsonResponse({ error: "Invalid or tampered session" }, 401, corsHeaders);
     }
 
-    return await handler(request, env, corsHeaders);
+    if (!session.ign || !session.exp) {
+        return await jsonResponse({ error: "Invalid token payload" }, 401, corsHeaders);
+    }
+
+    if (Date.now() > session.exp) {
+        return await jsonResponse({ error: "Session expired. Please log in again." }, 401, corsHeaders);
+    }
+
+    // Role-based Access Control (RBAC)
+    if (session.role !== 'admin' && session.role !== 'root') {
+        return await jsonResponse({ error: "Administrator credentials required." }, 403, corsHeaders);
+    }
+
+    return await handler(request, env, corsHeaders, session);
 }
+
+/**
+ * Super Admin Auth Wrapper (IAM Only)
+ */
+async function withSuperAdminAuth(request, env, corsHeaders, handler) {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return await jsonResponse({ error: "Missing authorization" }, 401, corsHeaders);
+    }
+
+    const token = authHeader.split(" ")[1];
+    const session = await verifyJWT(token, env.ALLIANCE_KEY);
+    
+    if (!session || session.role !== 'root') {
+        // Return 404 to hide the existence of IAM endpoints to unauthorized users
+        return await jsonResponse({ error: "Not found" }, 404, corsHeaders);
+    }
+
+    if (Date.now() > session.exp) {
+        return await jsonResponse({ error: "Root session expired." }, 401, corsHeaders);
+    }
+
+    return await handler(request, env, corsHeaders, session);
+}
+
+// ===== IAM HANDLERS =====
+
+async function handleListAdmins(request, env, corsHeaders) {
+    const list = await env.HIVEMIND_KV.list({ prefix: "iam::admins::" });
+    const admins = [];
+    for (const key of list.keys) {
+        const data = await env.HIVEMIND_KV.get(key.name, { type: "json" });
+        admins.push({
+            key: key.name.split("::")[2],
+            ign: data.ign,
+            role: data.role,
+            created_at: data.created_at
+        });
+    }
+    return await jsonResponse({ admins }, 200, corsHeaders);
+}
+
+async function handleAddAdmin(request, env, corsHeaders) {
+    const body = await request.json();
+    const { ign, key } = body;
+    if (!key) return await jsonResponse({ error: "Key required" }, 400, corsHeaders);
+
+    const data = {
+        ign: ign || "Unknown",
+        role: "admin",
+        created_at: Date.now()
+    };
+    await env.HIVEMIND_KV.put(`iam::admins::${key}`, JSON.stringify(data));
+    await logEvent(env, "iam_admin_added", { ign, key_preview: key.substring(0, 4) + "..." });
+    return await jsonResponse({ success: true }, 201, corsHeaders);
+}
+
+async function handleRevokeAdmin(request, env, corsHeaders) {
+    const url = new URL(request.url);
+    const key = url.searchParams.get("key");
+    if (!key) return await jsonResponse({ error: "Key required" }, 400, corsHeaders);
+
+    await env.HIVEMIND_KV.delete(`iam::admins::${key}`);
+    await logEvent(env, "iam_admin_revoked", { key_preview: key.substring(0, 4) + "..." });
+    return await jsonResponse({ success: true }, 200, corsHeaders);
+}
+
+
 
 // ===============================================================
 // MEMBER/PLAYER ROUTE AUTH
@@ -1528,6 +1967,15 @@ async function withPlayerAuth(request, env, corsHeaders, handler) {
 
     if (Date.now() > session.exp) {
         return await jsonResponse({ error: "Session expired. Please reconnect." }, 401, corsHeaders);
+    }
+    
+    // Real-Time Revocation Check
+    if (session.tid) {
+        const tokenExists = await env.HIVEMIND_KV.get(`token::${session.tid}`);
+        if (!tokenExists) {
+            await logEvent(env, "auth_revoked_session", { ign: session.ign });
+            return await jsonResponse({ error: "This token has been revoked. Contact leadership." }, 401, corsHeaders);
+        }
     }
 
     // Inject validated IGN into request for downstream usage
@@ -1622,4 +2070,56 @@ async function handleGetLogs(request, env, corsHeaders) {
     const paginated = logs.slice(startIndex, startIndex + limit);
 
     return await jsonResponse({ logs: paginated, total: logs.length, page }, 200, corsHeaders);
+}
+
+// ===============================================================
+// ROSTER MANAGEMENT
+// ===============================================================
+
+async function handleGetRoster(request, env, corsHeaders) {
+    const key = `stats::tqc::roster`;
+    const data = await env.HIVEMIND_KV.get(key);
+    return await jsonResponse(data ? JSON.parse(data) : { members: [] }, 200, corsHeaders);
+}
+
+async function handlePostRoster(request, env, corsHeaders) {
+    const data = await request.json();
+    if (!data || !Array.isArray(data.members)) {
+        return await jsonResponse({ error: "Expected { members: [] }" }, 400, corsHeaders);
+    }
+    const key = `stats::tqc::roster`;
+    await env.HIVEMIND_KV.put(key, JSON.stringify(data));
+    return await jsonResponse({ success: true }, 200, corsHeaders);
+}
+
+// ===============================================================
+// FLOOD FINDER (HYPERCHAIN)
+// ===============================================================
+
+async function handleGetFloodFinder(request, env, corsHeaders) {
+    const key = `admin::flood_finder`;
+    const data = await env.HIVEMIND_KV.get(key);
+    return await jsonResponse(data ? JSON.parse(data) : { targets: [] }, 200, corsHeaders);
+}
+
+async function handlePostFloodFinder(request, env, corsHeaders) {
+    const data = await request.json();
+    if (!data || !Array.isArray(data.targets)) {
+        return await jsonResponse({ error: "Expected { targets: [] }" }, 400, corsHeaders);
+    }
+    
+    const key = `admin::flood_finder`;
+    
+    // Add server-side timestamp to updates
+    const payload = {
+        targets: data.targets.map(t => ({
+            ...t,
+            last_updated: Date.now()
+        }))
+    };
+
+    await env.HIVEMIND_KV.put(key, JSON.stringify(payload));
+    await logEvent(env, "flood_finder_updated", { count: payload.targets.length, user: request.user?.ign });
+    
+    return await jsonResponse({ success: true, targets: payload.targets }, 200, corsHeaders);
 }
