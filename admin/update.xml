@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <!-- REPLACE the appid with the generated extension ID derived from your private key (.pem) -->
+  <app appid="YOUR_CHROME_EXTENSION_ID_FROM_PEM">
+    <updatecheck codebase="https://YOUR_ADMIN_SUBDOMAIN.pages.dev/downloads/hivemind-v2.51.crx" version="2.51" />
+  </app>
+</gupdate>

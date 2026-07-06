@@ -1,0 +1,12 @@
+{
+  "addons": {
+    "hivemind@rhyonfs.org": {
+      "updates": [
+        {
+          "version": "2.51",
+          "update_link": "https://YOUR_ADMIN_SUBDOMAIN.pages.dev/downloads/hivemind-v2.51.xpi"
+        }
+      ]
+    }
+  }
+}
