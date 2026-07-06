@@ -14,15 +14,22 @@ window.fetch = async function(...args) {
         window.showError("Session expired. Please log in again.");
         throw new Error("Session expired (401 Unauthorized)");
     }
+
+    // Auto-invalidate cache for this URL on mutating requests
+    const method = args[1]?.method || 'GET';
+    if (response.ok && ["POST", "PUT", "DELETE", "PATCH"].includes(method.toUpperCase())) {
+        const cacheKey = "HM_CACHE_" + requestUrl.replace(window.State.WORKER_URL, "");
+        localforage.removeItem(cacheKey).catch(() => {});
+    }
+
     return response;
 };
 
 /**
  * Wrapper for fetch that caches GET requests in IndexedDB (localForage).
- * Saves 100% of network latency and skips Cloudflare operations during repeated page loads,
- * while preventing main thread locking on large string parsing.
+ * Supports "Stale-While-Revalidate" (SWR): returns cache instantly, then updates in background.
  */
-window.fetchCached = async function(url, options = {}, ttlMs = 300000) {
+window.fetchCached = async function(url, options = {}, ttlMs = 300000, onUpdate = null) {
     if (options.method && options.method !== 'GET') {
         return window.fetch(url, options);
     }
@@ -32,7 +39,7 @@ window.fetchCached = async function(url, options = {}, ttlMs = 300000) {
 
     const cacheKey = "HM_CACHE_" + url.replace(window.State.WORKER_URL, "");
     
-    // Use IndexedDB via localForage
+    // 1. Try to get from Cache
     let cached = null;
     try {
         cached = await localforage.getItem(cacheKey);
@@ -40,48 +47,70 @@ window.fetchCached = async function(url, options = {}, ttlMs = 300000) {
         console.warn("localForage Error:", e);
     }
 
+    // 2. Background Revalidation Function
+    const revalidate = async () => {
+        const headers = { ...options.headers };
+        if (cached && cached.etag) {
+            headers["If-None-Match"] = cached.etag;
+        }
+
+        try {
+            const res = await window.fetch(url, { ...options, headers });
+
+            if (res.status === 304 && cached) {
+                // Server says nothing changed
+                cached.ts = Date.now();
+                await localforage.setItem(cacheKey, cached);
+                return;
+            }
+
+            if (res.ok) {
+                const data = await res.json();
+                const etag = res.headers.get("ETag");
+                await localforage.setItem(cacheKey, {
+                    ts: Date.now(),
+                    data,
+                    etag
+                });
+                // If data actually changed (or first load), notify the UI
+                if (onUpdate) onUpdate(data);
+                return data;
+            }
+        } catch (err) {
+            console.warn(`[Background Refresh] Failed for ${url}`, err);
+        }
+    };
+
+    // 3. Main Return Logic
     if (cached) {
-        // Instant return if within TTL and not forcing refresh
-        if (!forceRefresh && (Date.now() - cached.ts < ttlMs)) {
-            return { ok: true, json: async () => cached.data };
+        const isExpired = (Date.now() - cached.ts > ttlMs);
+        
+        if (!forceRefresh && !isExpired) {
+            // Valid cache — return instantly but still revalidate in background if ETag exists
+            revalidate(); 
+            return { ok: true, json: async () => cached.data, _fromCache: true };
+        }
+        
+        if (!forceRefresh && isExpired) {
+            // Stale cache — return instantly but force a revalidate
+            revalidate();
+            return { ok: true, json: async () => cached.data, _stale: true };
         }
     }
 
-    // Prepare headers for ETag check
-    const headers = { ...options.headers };
-    if (cached && cached.etag) {
-        headers["If-None-Match"] = cached.etag;
+    // 4. No cache or Force Refresh — standard fetch
+    const freshData = await revalidate();
+    if (freshData) {
+        return { ok: true, json: async () => freshData };
+    }
+    
+    // If revalidate failed but we have a stale cache, use it as last resort
+    if (cached) {
+        return { ok: true, json: async () => cached.data, _lastResort: true };
     }
 
-    try {
-        const res = await window.fetch(url, { ...options, headers });
-
-        if (res.status === 304 && cached) {
-            console.debug(`[Cache 304] ${url} - Server confirmed no changes.`);
-            cached.ts = Date.now(); // Extend TTL
-            await localforage.setItem(cacheKey, cached);
-            return { ok: true, json: async () => cached.data };
-        }
-
-        if (res.ok) {
-            const data = await res.json();
-            const etag = res.headers.get("ETag");
-            await localforage.setItem(cacheKey, {
-                ts: Date.now(),
-                data,
-                etag
-            });
-            return { ok: true, json: async () => data };
-        }
-        return res;
-    } catch (err) {
-        // Fallback to stale cache if network fails
-        if (cached) {
-            console.warn(`[Network Error] Falling back to stale cache for ${url}`, err);
-            return { ok: true, json: async () => cached.data };
-        }
-        throw err;
-    }
+    // Otherwise, it's a genuine failure
+    throw new Error(`Failed to fetch and no cache available for ${url}`);
 };
 
 window.clearCache = async function() {

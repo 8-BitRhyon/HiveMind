@@ -5,8 +5,24 @@
 document.addEventListener("DOMContentLoaded", () => {
     const saved = localStorage.getItem("HM_AdminSession");
     if (saved) {
-        window.State.adminSession = JSON.parse(saved);
-        showDashboard();
+        const session = JSON.parse(saved);
+        // Client-side JWT expiration gate — prevents flashing an empty dashboard
+        // when a stale token fires 8 endpoints that all return 401.
+        try {
+            const payload = JSON.parse(atob(session.token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+            if (payload.exp && Date.now() > payload.exp) {
+                // Token expired — purge silently, show login
+                localStorage.removeItem("HM_AdminSession");
+                console.warn("[HiveMind] Expired session purged from localStorage.");
+            } else {
+                window.State.adminSession = session;
+                showDashboard();
+            }
+        } catch (e) {
+            // Malformed token — purge
+            localStorage.removeItem("HM_AdminSession");
+            console.warn("[HiveMind] Malformed session token purged.", e);
+        }
     }
 
     // Auth Listeners
@@ -21,6 +37,9 @@ document.addEventListener("DOMContentLoaded", () => {
         tab.addEventListener("click", () => switchTab(tab.dataset.tab));
     });
 
+    // Start Header Clocks
+    startAdminClocks();
+
     // Sub-Modals & Tab Switching (History)
     document.getElementById("closeHistoryModal")?.addEventListener("click", () => {
         document.getElementById("playerHistoryModal").classList.add("hidden");
@@ -31,6 +50,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ⌘K Command Palette
     window.CmdPalette?.initListeners();
+    window.initWindowChrome?.();
+    window.AllianceCommandCenter?.initListeners();
+    window.Roster?.initListeners();
+    // Only load roster if we have a valid session — otherwise it crashes on null token
+    if (window.State.adminSession) window.Roster?.load();
 
     // Inject ⌘K hint button into header
     const header = document.querySelector("header");
@@ -42,7 +66,9 @@ document.addEventListener("DOMContentLoaded", () => {
         hint.addEventListener("click", () => window.CmdPalette?.open());
         // Insert before logout button
         const logout = document.getElementById("logoutBtn");
-        if (logout) header.insertBefore(hint, logout);
+        if (logout && logout.parentNode) {
+            logout.parentNode.insertBefore(hint, logout);
+        }
     }
 
     // War Room — click-to-copy on HF values via class
@@ -54,6 +80,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 cell.textContent = "Copied";
                 setTimeout(() => { cell.textContent = orig; }, 1000);
             });
+        }
+    });
+
+    // QoL: Double-Click on table rows to search them in Cmd Palette
+    document.addEventListener("dblclick", (e) => {
+        const tr = e.target.closest("tr");
+        if (tr) {
+            // Find if there's a link with a player or alliance dataset
+            const link = tr.querySelector("[data-player]") || tr.querySelector("[data-alliance]");
+            if (link && window.CmdPalette) {
+                const query = link.dataset.player || link.dataset.alliance;
+                window.CmdPalette.open(query);
+            }
         }
     });
 
@@ -119,7 +158,50 @@ document.addEventListener("DOMContentLoaded", () => {
         loadDashboard(); 
     }));
 
+    // QoL: Local CSV Export
+    const exportCsvBtn = document.getElementById("exportCsvBtn");
+    if (exportCsvBtn) {
+        exportCsvBtn.addEventListener("click", () => {
+            const data = window.State.hfDataSnapshot;
+            if (!data || data.length === 0) {
+                alert("No data to export. Try syncing first.");
+                return;
+            }
+
+            // Create CSV Headers
+            const headers = ["Player", "Alliance", "HF", "Anthill", "Tech", "Fight", "Timestamp"];
+            // Extract and format rows
+            const rows = data.map(p => {
+                const now = new Date().toISOString();
+                return [
+                    `"${(p.name || '').replace(/"/g, '""')}"`,
+                    `"${(p.alliance || '').replace(/"/g, '""')}"`,
+                    p.hf || 0,
+                    p.anthill || 0,
+                    p.tech || 0,
+                    p.fight || 0,
+                    now
+                ].join(',');
+            });
+
+            const csvContent = headers.join(',') + '\n' + rows.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `HIVEMIND_LEDGER_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    }
+
+
     document.getElementById("alliancesRefreshBtn")?.addEventListener("click", window.withRefresh(window.loadAlliances));
+    document.getElementById("alliancesSearchInput")?.addEventListener("input", () => {
+        window.filterAlliancesTable?.();
+    });
     
     // Sort Listeners
     document.querySelectorAll("#hfTable th.sortable").forEach(th => {
@@ -247,6 +329,90 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Chart.js Global Loader Interceptor
+    if (window.Chart) {
+        window.Chart.register({
+            id: 'hideLoaderPlugin',
+            afterInit: (chart) => {
+                const id = chart.canvas.id;
+                const loader = document.getElementById('loading_' + id);
+                if (loader) loader.style.display = 'none';
+            }
+        });
+    }
+
+    // Keyboard Shortcuts (1-6) for Tabs
+    document.addEventListener("keydown", (e) => {
+        // Prevent triggering while typing in inputs
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+        if (e.metaKey || e.ctrlKey || e.altKey) return; // ignore complex combos, except bare numbers
+        
+        const keyMap = {
+            "1": "dashboardScreen",
+            "2": "playerTrackerScreen",
+            "3": "visualIntelTab", // This ID is 'visualIntelTab' not Screen in HTML
+            "4": "allianceRankingsTab",
+            "5": "diplomacyTab",
+            "6": "warRoomTab"
+        };
+        
+        // Minor correction: standard tab names are dashboardScreen, playerTrackerScreen, alliancesScreen, diplomacyScreen, warRoomScreen.
+        // Let's grab all actual tabs
+        const tabs = document.querySelectorAll(".tab");
+        const num = parseInt(e.key);
+        if (!isNaN(num) && num > 0 && num <= tabs.length) {
+            tabs[num - 1].click();
+        }
+    });
+
+    // Search / Command Palette Trigger
+    const searchBtn = document.getElementById("headerSearchBtn");
+    if (searchBtn) {
+        searchBtn.addEventListener("click", () => {
+            window.CmdPalette?.open();
+        });
+    }
+
+    // Theme Toggle Logic
+    const themeBtn = document.getElementById("themeToggleBtn");
+    if (themeBtn) {
+        const savedTheme = localStorage.getItem("HM_Theme") || "light";
+        document.documentElement.setAttribute("data-theme", savedTheme);
+        themeBtn.addEventListener("click", () => {
+            const currentTheme = document.documentElement.getAttribute("data-theme") || "light";
+            const newTheme = currentTheme === "light" ? "dark" : "light";
+            document.documentElement.setAttribute("data-theme", newTheme);
+            localStorage.setItem("HM_Theme", newTheme);
+            
+            // Re-draw charts slightly via tab switch or soft reload if needed
+            if (window.Chart) {
+                // Changing the generic tooltips/chart generic styles might happen automatically 
+                // if CSS variables update, but hardcoded Chart.js colors won't unless refreshed.
+                // We'll rely on the user refreshing the app/tabs.
+            }
+        });
+    }
+
+    // Dynamic Retro OS Title Bars
+    const updateTitles = () => {
+        document.querySelectorAll('.window-card').forEach(card => {
+            if (card.hasAttribute('data-window-title') && card.getAttribute('data-window-title').length > 0) return;
+            let title = "";
+            const h3 = card.querySelector('h3');
+            const kpiLabel = card.querySelector('.kpi-label');
+            if (h3) title = h3.textContent;
+            else if (kpiLabel) title = kpiLabel.textContent;
+            else if (card.classList.contains('modal-content')) {
+                const modalH3 = card.querySelector('.modal-header h3');
+                if (modalH3) title = modalH3.textContent;
+            }
+            if (title) card.setAttribute('data-window-title', title.toUpperCase());
+        });
+    };
+    updateTitles();
+    // Re-run in case DOM elements load later
+    setTimeout(updateTitles, 1000);
+
     // ═══════════════════════════════════════════════════════════
     // VOLTRON PATTERN COMPLIANCE
     // ═══════════════════════════════════════════════════════════
@@ -280,7 +446,11 @@ async function handleLogin() {
             throw new Error(error.error || "Authentication failed");
         }
         const data = await response.json();
-        window.State.adminSession = { token: data.token };
+        window.State.adminSession = { 
+            token: data.token,
+            role: data.role || 'admin',
+            ign: data.ign || 'Unknown'
+        };
         localStorage.setItem("HM_AdminSession", JSON.stringify(window.State.adminSession));
         showDashboard();
     } catch (err) { window.showError(err.message); } 
@@ -304,91 +474,105 @@ function showDashboard() {
 
     document.getElementById("freshnessText").textContent = "Syncing...";
 
-    // Fire all 8 endpoints in ONE parallel batch — eliminates all duplicate requests
-    Promise.all([
-        window.fetchCached(`${W}/admin/players/history`,   { headers }),
-        window.fetchCached(`${W}/admin/tokens`,            { headers }),
-        window.fetchCached(`${W}/admin/logs?event=hf_submit&page=1&limit=1`, { headers }),
-        window.fetchCached(`${W}/admin/diplomacy`,         { headers }),
-        window.fetchCached(`${W}/admin/alliances/history`, { headers }),
-        window.fetchCached(`${W}/admin/economy`,           { headers }),
-        window.fetchCached(`${W}/intel/list`,              { headers }),
-        window.fetchCached(`${W}/admin/logs?page=1&limit=50`, { headers })
-    ]).then(async ([histRes, tokRes, logsOneRes, diploRes, alliHistRes, econRes, intelRes, logsRes]) => {
-
-        const [histData, tokData, logsOneData, diploData, alliHistData, econData, intelData, logsData] = await Promise.all([
-            histRes.ok     ? histRes.json()      : [],
-            tokRes.ok      ? tokRes.json()       : { tokens: [] },
-            logsOneRes.ok  ? logsOneRes.json()   : { logs: [] },
-            diploRes.ok    ? diploRes.json()     : { pacts: [], wars: [] },
-            alliHistRes.ok ? alliHistRes.json()  : [],
-            econRes.ok     ? econRes.json()      : null,
-            intelRes.ok    ? intelRes.json()     : { list: [] },
-            logsRes.ok     ? logsRes.json()      : { logs: [] }
-        ]);
-
-        // Distribute into State
-        window.State.playerHistoryData   = Array.isArray(histData) ? histData : [];
-        window.State.diplomacyData       = diploData;
-        window.State.allianceHistoryData = Array.isArray(alliHistData) ? alliHistData : [];
-        window.State.intelDataSnapshot   = intelData?.list || (Array.isArray(intelData) ? intelData : []);
-
-        const latestPlayers = window.State.playerHistoryData[0]?.data || [];
-        window.State.hfDataSnapshot     = latestPlayers;
-        window.State.hfPreviousSnapshot = window.State.playerHistoryData[1]?.data || null;
-
-        // Dashboard KPIs + charts
-        _renderDashboardFromState(histData, tokData, logsOneData);
-
-        // Economy
-        if (econData) window.renderEconomyChart(econData);
-
-        // Tokens table
-        _renderTokensFromState(tokData);
-
-        // Logs table
-        _renderLogsFromState(logsData);
-
-        // Alliances (reads from State — no re-fetch)
-        if (window.State.allianceHistoryData.length > 0) {
-            window.loadAlliances();
-        }
-
-        // HF table + Visual Intel charts
-        if (latestPlayers.length > 0) {
+    // 1. Critical Path: Player History & Diplomacy
+    // These drive the main dashboard KPIs and the Realm Graph.
+    const loadHistory = async () => {
+        const res = await window.fetchCached(`${W}/admin/players/history`, { headers }, 300000, (data) => {
+            window.State.playerHistoryData = data;
+            const latest = data[0]?.data || [];
+            window.State.hfDataSnapshot = latest;
+            window.State.hfPreviousSnapshot = data[1]?.data || null;
+            _renderDashboardFromState(data, window.State.lastTokenData, window.State.lastLogsOneData);
             window.filterHFTable();
-            _populateAllianceFilters(latestPlayers);
-            const minHF = parseInt(document.getElementById("gcMinHF")?.value, 10) || 100000;
-            const maxHF = parseInt(document.getElementById("gcMaxHF")?.value, 10) || 1000000000;
-            window.renderGlassCannonChart(latestPlayers, window.State.intelDataSnapshot, minHF, maxHF);
-            window.renderProfilerChart(latestPlayers, "ALL");
-        }
+            window.initSnapshotDiff(data);
+        });
+        const data = await res.json();
+        window.State.playerHistoryData = data;
+        const latest = data[0]?.data || [];
+        window.State.hfDataSnapshot = latest;
+        window.State.hfPreviousSnapshot = data[1]?.data || null;
+        _renderDashboardFromState(data, window.State.lastTokenData, window.State.lastLogsOneData);
+        window.filterHFTable();
+        window.initSnapshotDiff(data);
+    };
 
-        // Heatmap
-        if (window.State.intelDataSnapshot.length > 0) {
-            window.renderActivityHeatmap(window.State.intelDataSnapshot);
-        }
-
-        // Snapshot diff
-        window.initSnapshotDiff(window.State.playerHistoryData);
-
-        // Diplomacy
+    const loadDiplomacy = async () => {
+        const res = await window.fetchCached(`${W}/admin/diplomacy`, { headers }, 600000, (data) => {
+            window.State.diplomacyData = data;
+            if (window.Diplomacy) window.Diplomacy.render();
+        });
+        const data = await res.json();
+        window.State.diplomacyData = data;
         if (window.Diplomacy) {
             window.Diplomacy.initListeners();
             window.Diplomacy.render();
         }
+    };
 
-        console.log("[HiveMind] Bootstrap complete — 8 endpoints, 2 parallel rounds");
-
-    }).catch(err => {
-        console.error("[HiveMind] Bootstrap failed, falling back:", err);
-        loadDashboard();
-        window.loadHFLatest();
-        window.loadIntel();
+    // 2. Secondary Path: Alliance History & Economy
+    const loadAlliances = async () => {
+        const res = await window.fetchCached(`${W}/admin/alliances/history`, { headers }, 300000, (data) => {
+            window.State.allianceHistoryData = data;
+            window.loadAlliances();
+            window.renderAllianceStackedArea(data);
+        });
+        const data = await res.json();
+        window.State.allianceHistoryData = data;
         window.loadAlliances();
-    });
+        window.renderAllianceStackedArea(data);
+    };
 
-    loadTokens(); // tokens tab loads independently
+    const loadEconomy = async () => {
+        const res = await window.fetchCached(`${W}/admin/economy`, { headers }, 600000, (data) => {
+            window.renderEconomyChart(data);
+        });
+        const data = await res.json();
+        if (data) window.renderEconomyChart(data);
+    };
+
+    // 3. Background Path: Logs & Tokens (Heavy payloads)
+    const loadLogsAndTokens = async () => {
+        // We fetch these in parallel but they render independently
+        window.fetchCached(`${W}/admin/tokens`, { headers }, 60000, (data) => {
+             window.State.lastTokenData = data;
+             _renderTokensFromState(data);
+        }).then(res => res.json()).then(data => {
+             window.State.lastTokenData = data;
+             _renderTokensFromState(data);
+        });
+
+        window.fetchCached(`${W}/admin/logs?page=1&limit=1000`, { headers }, 60000, (data) => {
+            window.State.logs = data.logs || [];
+            _renderLogsFromState(data);
+        }).then(res => res.json()).then(data => {
+            window.State.logs = data.logs || [];
+            _renderLogsFromState(data);
+        });
+    };
+
+    const loadIntel = async () => {
+        window.fetchCached(`${W}/intel/list`, { headers }, 300000, (data) => {
+            window.State.intelDataSnapshot = data?.list || data || [];
+        }).then(res => res.json()).then(data => {
+            window.State.intelDataSnapshot = data?.list || data || [];
+        });
+    };
+
+    // Fire everything!
+    loadHistory();
+    loadDiplomacy();
+    loadAlliances();
+    loadEconomy();
+    loadLogsAndTokens();
+    loadIntel();
+
+    // Roster — must load after auth is confirmed
+    if (window.Roster) window.Roster.load();
+
+    // IAM — Super Admin Check
+    if (window.IAM) window.IAM.init();
+
+    console.log("[HiveMind] Incremental bootstrap started — using SWR for instant load.");
 }
 
 function _populateAllianceFilters(players) {
@@ -407,19 +591,63 @@ function _renderTokensFromState(tokData) {
     const tbody = document.getElementById("tokensBody");
     if (!tbody) return;
     const tokens = tokData?.tokens || [];
-    if (!tokens.length) { tbody.innerHTML = "<tr><td colspan='4'>No tokens yet. Create one.</td></tr>"; return; }
-    tbody.innerHTML = tokens.map(t => `<tr>
+    const logs = window.State.logs || [];
+
+    if (!tokens.length) { 
+        tbody.innerHTML = "<tr><td colspan='6'>No tokens yet. Create one.</td></tr>"; 
+        document.getElementById("tokenSummaryBar").style.display = "none";
+        return; 
+    }
+
+    // Cross-reference tokens with activity logs to find last activity
+    const ignLastSeen = {};
+    logs.forEach(log => {
+        const ign = log.ign || log.submittedBy;
+        if (ign && log.timestamp) {
+            if (!ignLastSeen[ign] || log.timestamp > ignLastSeen[ign]) {
+                ignLastSeen[ign] = log.timestamp;
+            }
+        }
+    });
+
+    let activeCount = 0, dormantCount = 0, neverCount = 0;
+    const DAY7 = 7 * 86400000;
+
+    tbody.innerHTML = tokens.map(t => {
+        const lastSeen = ignLastSeen[t.ign] || 0;
+        let statusClass, statusText;
+        if (lastSeen === 0) {
+            statusClass = "never"; statusText = "Never Used"; neverCount++;
+        } else if (Date.now() - lastSeen < DAY7) {
+            statusClass = "active"; statusText = "Active"; activeCount++;
+        } else {
+            statusClass = "dormant"; statusText = "Dormant"; dormantCount++;
+        }
+
+        return `<tr>
         <td><strong>${window.escapeHtml(t.ign)}</strong></td>
         <td>${t.role}</td>
         <td>${window.formatDate(t.created_at)}</td>
+        <td>${lastSeen > 0 ? window.timeAgo(lastSeen) : "<span style='color:var(--text-muted)'>—</span>"}</td>
+        <td><span class="token-status ${statusClass}">${statusText}</span></td>
         <td><button class="btn-danger btn-danger-revoke" data-id="${t.id}" data-ign="${window.escapeHtml(t.ign)}">Revoke</button></td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
+
+    // Token Summary Bar
+    const bar = document.getElementById("tokenSummaryBar");
+    bar.style.display = "flex";
+    document.getElementById("tokenCountTotal").textContent = tokens.length;
+    document.getElementById("tokenCountActive").textContent = activeCount;
+    document.getElementById("tokenCountDormant").textContent = dormantCount;
+    document.getElementById("tokenCountNever").textContent = neverCount;
 }
 
 function _renderLogsFromState(logsData) {
     const tbody = document.getElementById("logsBody");
     if (!tbody) return;
     const logs = logsData?.logs || [];
+    window.State.logs = logs;
     if (!logs.length) { tbody.innerHTML = "<tr><td colspan='4'>No logs found</td></tr>"; return; }
     tbody.innerHTML = logs.map(log => `<tr>
         <td>${window.formatDate(log.timestamp)}</td>
@@ -430,6 +658,64 @@ function _renderLogsFromState(logsData) {
     document.getElementById("logPage").textContent = `Page ${window.State.currentPage}`;
     document.getElementById("prevLogs").disabled = window.State.currentPage === 1;
     document.getElementById("nextLogs").disabled = logs.length < 50;
+
+    // Phase 2: Security KPIs from logs
+    _renderSecurityOverview(logs);
+
+    // Phase 1: Activity Heatmap from logs
+    window.renderActivityHeatmap(logs);
+}
+
+function _renderSecurityOverview(logs) {
+    if (!logs || logs.length === 0) return;
+
+    const DAY = 86400000;
+    const now = Date.now();
+    
+    let fails24h = 0;
+    let success24h = 0;
+    let lockoutsTotal = 0;
+    let rateLimitsTotal = 0;
+
+    logs.forEach(log => {
+        if (!log.timestamp) return;
+        const isRecent = (now - log.timestamp) < DAY;
+
+        if (log.event === "auth_failure") {
+            if (isRecent) fails24h++;
+        } else if (log.event === "auth_success") {
+            if (isRecent) success24h++;
+        } else if (log.event === "auth_account_locked") {
+            lockoutsTotal++;
+        } else if (log.event === "auth_rate_limited") {
+            rateLimitsTotal++;
+        }
+    });
+
+    const elFails = document.getElementById("secFailures");
+    if (elFails) {
+        elFails.textContent = fails24h;
+        elFails.className = fails24h > 10 ? "sec-value danger" : (fails24h > 0 ? "sec-value warning" : "sec-value");
+    }
+
+    const elSuccess = document.getElementById("secSessions");
+    if (elSuccess) {
+        elSuccess.textContent = success24h;
+        elSuccess.className = "sec-value success";
+    }
+
+    const elLockouts = document.getElementById("secLockouts");
+    if (elLockouts) {
+        elLockouts.textContent = lockoutsTotal;
+        elLockouts.className = lockoutsTotal > 0 ? "sec-value danger" : "sec-value";
+    }
+
+    const elRateLimits = document.getElementById("secRateLimits");
+    if (elRateLimits) {
+        elRateLimits.textContent = rateLimitsTotal;
+    }
+
+    window.renderSecurityTimeline(logs);
 }
 
 function _renderDashboardFromState(histData, tokData, logsOneData) {
@@ -438,7 +724,12 @@ function _renderDashboardFromState(histData, tokData, logsOneData) {
             ...p, prev_hf: histData[1]?.data?.find(x => x.name?.toLowerCase() === p.name?.toLowerCase())?.hf || null
         }));
         const tokens     = tokData?.tokens || [];
-        const tqcPlayers = players.filter(p => p.alliance?.toUpperCase() === "TQC");
+        const roster     = window.State.tqcRoster || [];
+        const tqcPlayers = players.filter(p => {
+            const isTqcTagged = p.alliance?.toUpperCase() === "TQC";
+            const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+            return roster.length > 0 ? isRostered : isTqcTagged;
+        });
 
         document.getElementById("kpiPlayers").textContent      = tqcPlayers.length;
         document.getElementById("kpiPlayersDetail").textContent = tqcPlayers.length > 0 ? "TQC members on record" : "No TQC data yet";
@@ -488,6 +779,42 @@ function _renderDashboardFromState(histData, tokData, logsOneData) {
         renderTopList(tqcPlayers.slice(0, 10));
         if (histData.length > 0) window.renderTrendChart(histData);
 
+        // Power Balance — uses ALL players, not just TQC
+        window.renderPowerBalance(players);
+
+        // KPI Sparklines — extract trend data from historical snapshots
+        if (histData.length >= 2) {
+            const reversed = [...histData].reverse();
+            const roster = window.State.tqcRoster || [];
+            
+            // Tracked Players over time
+            const playerCounts = reversed.map(s => (s.data || []).filter(p => {
+                const isTqcTagged = p.alliance?.toUpperCase() === "TQC";
+                const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+                return roster.length > 0 ? isRostered : isTqcTagged;
+            }).length);
+            window.renderKPISparkline("sparkPlayers", playerCounts, "#3498db", "sparkPlayers");
+
+            // Total HF over time
+            const totalHFs = reversed.map(s => (s.data || []).filter(p => {
+                const isTqcTagged = p.alliance?.toUpperCase() === "TQC";
+                const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+                return roster.length > 0 ? isRostered : isTqcTagged;
+            }).reduce((sum, p) => sum + (p.hf || 0), 0));
+            window.renderKPISparkline("sparkHF", totalHFs, "#c9a84c", "sparkHF");
+
+            // Top player HF over time
+            const topHFs = reversed.map(s => {
+                const tqc = (s.data || []).filter(p => {
+                    const isTqcTagged = p.alliance?.toUpperCase() === "TQC";
+                    const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+                    return roster.length > 0 ? isRostered : isTqcTagged;
+                });
+                return tqc.length > 0 ? Math.max(...tqc.map(p => p.hf || 0)) : 0;
+            });
+            window.renderKPISparkline("sparkTop", topHFs, "#e67e22", "sparkTop");
+        }
+
     } catch (err) { console.error("Dashboard render error:", err); }
 }
 
@@ -524,6 +851,11 @@ function switchTab(tabName) {
         }
     }
 
+    // Diplomacy — refresh views
+    if (tabName === "diplomacy" && window.Diplomacy) {
+        window.Diplomacy.render();
+    }
+
     // War Room — render all widgets on first visit
     if (tabName === "warroom") {
         window.renderAnomalyFeed();
@@ -531,6 +863,34 @@ function switchTab(tabName) {
         // Populate snapshot diff dropdowns
         if (window.State.playerHistoryData) {
             window.initSnapshotDiff(window.State.playerHistoryData);
+        }
+        // Render activity heatmap with cached logs
+        if (window.State.logs?.length > 0) {
+            window.renderActivityHeatmap(window.State.logs);
+        }
+    }
+
+    // Flood Finder
+    if (tabName === "floodfinder" && window.FloodFinder) {
+        window.FloodFinder.init();
+    }
+
+    // IAM (Access Control)
+    if (tabName === "iam" && window.IAM) {
+        window.IAM.load();
+    }
+
+    // Logs tab — re-render Security Overview on visit
+    if (tabName === "logs") {
+        if (window.State.logs?.length > 0) {
+            _renderSecurityOverview(window.State.logs);
+        }
+    }
+
+    // Alliances tab — re-render stacked area on visit
+    if (tabName === "alliances") {
+        if (window.State.allianceHistoryData?.length > 0) {
+            window.renderAllianceStackedArea(window.State.allianceHistoryData);
         }
     }
 
@@ -549,7 +909,7 @@ async function loadDashboard() {
         const [histRes, tokRes, logsRes] = await Promise.all([
             window.fetchCached(`${window.State.WORKER_URL}/admin/players/history`, { headers }),
             window.fetchCached(`${window.State.WORKER_URL}/admin/tokens`, { headers }),
-            window.fetchCached(`${window.State.WORKER_URL}/admin/logs?event=hf_submit&page=1&limit=1`, { headers })
+            window.fetchCached(`${window.State.WORKER_URL}/admin/logs?page=1&limit=1000`, { headers })
         ]);
 
         const [histData, tokData, logsData] = await Promise.all([
@@ -566,7 +926,12 @@ async function loadDashboard() {
         }));
 
         const tokens = tokData.tokens || [];
-        const tqcPlayers = players.filter(p => p.alliance && p.alliance.toUpperCase() === "TQC");
+        const roster = window.State.tqcRoster || [];
+        const tqcPlayers = players.filter(p => {
+            const isTqcTagged = p.alliance && p.alliance.toUpperCase() === "TQC";
+            const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+            return roster.length > 0 ? isRostered : isTqcTagged;
+        });
 
         document.getElementById("kpiPlayers").textContent = tqcPlayers.length;
         document.getElementById("kpiPlayersDetail").textContent = tqcPlayers.length > 0 ? "TQC members on record" : "No TQC data yet";
@@ -675,29 +1040,17 @@ function renderTopList(players) {
 // ═══════════════════════════════════════════════════════════
 async function loadTokens() {
     const tbody = document.getElementById("tokensBody");
-    tbody.innerHTML = "<tr><td colspan='4' class='loading-cell'>Loading...</td></tr>";
+    tbody.innerHTML = "<tr><td colspan='6' class='loading-cell'>Loading...</td></tr>";
     try {
-        const response = await window.fetchCached(`${window.State.WORKER_URL}/admin/tokens`, {
+        // Always fetch fresh — never cache token lists, since create/revoke must reflect immediately
+        const response = await window.fetch(`${window.State.WORKER_URL}/admin/tokens`, {
             headers: { "Authorization": `Bearer ${window.State.adminSession.token}` }
         });
         if (!response.ok) throw new Error("Failed to load tokens");
         const data = await response.json();
-        if (data.tokens.length === 0) { tbody.innerHTML = "<tr><td colspan='4'>No tokens yet. Create one.</td></tr>"; return; }
-        
-        // Changed to use dataset attributes for event delegation
-        tbody.innerHTML = data.tokens.map(t => `
-            <tr>
-                <td><strong>${window.escapeHtml(t.ign)}</strong></td>
-                <td>${t.role}</td>
-                <td>${window.formatDate(t.created_at)}</td>
-                <td>
-                    <button class="btn-danger btn-danger-revoke" data-id="${t.id}" data-ign="${window.escapeHtml(t.ign)}">
-                        Revoke
-                    </button>
-                </td>
-            </tr>
-        `).join("");
-    } catch (err) { tbody.innerHTML = `<tr><td colspan='4' style="color: var(--error);">Error: ${window.escapeHtml(err.message)}</td></tr>`; }
+        // Delegate to the shared renderer which handles status badges
+        _renderTokensFromState(data);
+    } catch (err) { tbody.innerHTML = `<tr><td colspan='6' style="color: var(--error);">Error: ${window.escapeHtml(err.message)}</td></tr>`; }
 }
 function showCreateTokenModal() {
     document.getElementById("createTokenModal").classList.remove("hidden");
@@ -784,6 +1137,7 @@ function formatLogDetails(log) {
     if (log.event === "hf_submit") return `${log.count || 0} players via ${log.source || "unknown"}`;
     if (log.event === "token_created") return `Created for ${log.ign || "?"} (${log.role || "member"})`;
     if (log.event === "token_revoked") return `Revoked for ${log.ign || "?"}`;
+    if (log.event === "admin_diplomacy_update") return log.detail || "Updated diplomacy configuration";
     const details = { ...log }; delete details.event; delete details.timestamp;
     const str = JSON.stringify(details);
     return str === "{}" ? "—" : window.escapeHtml(str);
@@ -798,10 +1152,11 @@ async function openPlayerHistoryModal(playerName) {
     modal.classList.remove("hidden");
     title.textContent = `Player Intelligence: ${playerName}`;
 
-    document.getElementById("historyModalMaxHF").textContent = "Loading...";
-    document.getElementById("historyModalMaxTech").textContent = "Loading...";
-    document.getElementById("historyModalMaxAnthill").textContent = "Loading...";
     document.getElementById("historyModalMaxFight").textContent = "Loading...";
+
+    // Re-init chrome for modal
+    window.initWindowChrome?.();
+
     document.getElementById("historyDetailedBody").innerHTML = "<tr><td colspan='5' class='loading-cell'>Loading...</td></tr>";
 
     if (window.State.charts.playerHistory) {
@@ -892,12 +1247,23 @@ async function openAllianceHistoryModal(allianceName) {
     document.getElementById("allianceModalMaxAvgHF").textContent = "Loading...";
     document.getElementById("allianceModalMaxAnthill").textContent = "Loading...";
     document.getElementById("allianceModalMaxMembers").textContent = "Loading...";
+    document.getElementById("allianceModalHegemony").textContent = "Calculating...";
+    document.getElementById("allianceModalStability").textContent = "Calculating...";
     document.getElementById("allianceDetailedBody").innerHTML = "<tr><td colspan='5' class='loading-cell'>Loading...</td></tr>";
+    document.getElementById("allianceMemberBreakdown").innerHTML = "";
 
-    if (window.State.charts.allianceHistoryModal) {
-        window.State.charts.allianceHistoryModal.destroy();
-        window.State.charts.allianceHistoryModal = null;
-    }
+    // Track target to prevent race conditions on slow fetches
+    window.State.currentAllianceModalTarget = allianceName;
+
+    // Bulletproof canvas cleanup — use Chart.getChart() to find whatever
+    // is on the canvas, regardless of what State holds
+    const existingDetailedChart = Chart.getChart("allianceDetailedChart");
+    if (existingDetailedChart) existingDetailedChart.destroy();
+    window.State.charts.allianceHistoryModal = null;
+
+    const existingHegemonyChart = Chart.getChart("allianceHegemonyChart");
+    if (existingHegemonyChart) existingHegemonyChart.destroy();
+    window.State.charts.allianceHegemony = null;
 
     try {
         const response = await window.fetchCached(`${window.State.WORKER_URL}/admin/players/history`, {
@@ -906,19 +1272,37 @@ async function openAllianceHistoryModal(allianceName) {
         if (!response.ok) throw new Error("Failed to load history");
 
         const data = await response.json();
+        
+        // Race condition check: If the user opened a different alliance while we were fetching, ignore this result
+        if (window.State.currentAllianceModalTarget !== allianceName) return;
+
+        // historyData is newest-first from the API
         const historyData = Array.isArray(data) ? data : [];
         const allianceChronology = [];
         let maxHF = 0, maxAvgHF = 0, maxAnthill = 0, maxMembers = 0;
 
+        const roster = window.State.tqcRoster || [];
+        const isTQC = allianceName.toUpperCase() === "TQC";
+        const getAllianceMembers = (snapData) => {
+            return (snapData || []).filter(x => {
+                const isTagged = (x.alliance || "").toUpperCase() === allianceName.toUpperCase();
+                if (isTQC && roster.length > 0) {
+                    return roster.some(m => m.toLowerCase() === x.name?.toLowerCase());
+                }
+                return isTagged;
+            });
+        };
+
+        // Build chronology oldest → newest for charting
         [...historyData].reverse().forEach(snapshot => {
-            const members = snapshot.data.filter(x => x.alliance === allianceName);
+            const members = getAllianceMembers(snapshot.data);
             if (members.length > 0) {
                 const totalHF = members.reduce((sum, m) => sum + (m.hf || 0), 0);
                 const totalAnthill = members.reduce((sum, m) => sum + (m.anthill || 0), 0);
                 const avgHF = Math.floor(totalHF / members.length);
                 const count = members.length;
                 
-                allianceChronology.push({ ts: snapshot.timestamp, hf: totalHF, avgHF: avgHF, anthill: totalAnthill, members: count });
+                allianceChronology.push({ ts: snapshot.timestamp, hf: totalHF, avgHF: avgHF, anthill: totalAnthill, members: count, memberNames: members.map(m => m.name) });
                 if (totalHF > maxHF) maxHF = totalHF;
                 if (avgHF > maxAvgHF) maxAvgHF = avgHF;
                 if (totalAnthill > maxAnthill) maxAnthill = totalAnthill;
@@ -928,6 +1312,8 @@ async function openAllianceHistoryModal(allianceName) {
 
         if (allianceChronology.length === 0) {
             document.getElementById("allianceDetailedBody").innerHTML = "<tr><td colspan='5'>No historical data found for this alliance.</td></tr>";
+            document.getElementById("allianceModalHegemony").textContent = "—";
+            document.getElementById("allianceModalStability").textContent = "—";
             return;
         }
 
@@ -948,6 +1334,11 @@ async function openAllianceHistoryModal(allianceName) {
         `).join("");
 
         const labels = allianceChronology.map(a => new Date(a.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+        
+        // Secondary cleanup right before creation to handle race conditions
+        const finalCheckDetailed = Chart.getChart("allianceDetailedChart");
+        if (finalCheckDetailed) finalCheckDetailed.destroy();
+        
         const ctx = document.getElementById("allianceDetailedChart").getContext("2d");
 
         window.State.charts.allianceHistoryModal = new Chart(ctx, {
@@ -957,7 +1348,7 @@ async function openAllianceHistoryModal(allianceName) {
                 datasets: [
                     { label: "Total HF", data: allianceChronology.map(a => a.hf || null), spanGaps: true, borderColor: window.CHART_THEME.accentGlow, backgroundColor: "transparent", yAxisID: 'y' },
                     { label: "Avg HF/Memb", data: allianceChronology.map(a => a.avgHF || null), spanGaps: true, borderColor: '#7ab8e8', backgroundColor: "transparent", yAxisID: 'y1' },
-                    { label: "Total Anthill", data: allianceChronology.map(a => a.anthill || null), spanGaps: true, borderColor: window.CHART_THEME.maroon, backgroundColor: "transparent", yAxisID: 'y1' }
+                    { label: "Total Anthill", data: allianceChronology.map(a => a.anthill || null), spanGaps: true, borderColor: window.CHART_THEME.maroon, backgroundColor: "transparent", yAxisID: 'y2' }
                 ]
             },
             options: {
@@ -965,7 +1356,8 @@ async function openAllianceHistoryModal(allianceName) {
                 scales: {
                     x: { ticks: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font } }, grid: { color: window.CHART_THEME.grid } },
                     y: { type: 'linear', display: true, position: 'left', ticks: { color: window.CHART_THEME.accentGlow, font: { family: window.CHART_THEME.font }, callback: (v) => window.formatCompact(v) }, grid: { color: window.CHART_THEME.grid } },
-                    y1: { type: 'linear', display: true, position: 'right', ticks: { color: window.CHART_THEME.maroon, font: { family: window.CHART_THEME.font }, callback: (v) => window.formatCompact(v) }, grid: { drawOnChartArea: false } }
+                    y1: { type: 'linear', display: true, position: 'right', ticks: { color: '#7ab8e8', font: { family: window.CHART_THEME.font }, callback: (v) => window.formatCompact(v) }, grid: { drawOnChartArea: false } },
+                    y2: { type: 'linear', display: true, position: 'right', ticks: { color: window.CHART_THEME.maroon, font: { family: window.CHART_THEME.font }, callback: (v) => v.toLocaleString() }, grid: { drawOnChartArea: false } }
                 },
                 plugins: {
                     legend: { labels: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font, size: 13 } } },
@@ -974,5 +1366,478 @@ async function openAllianceHistoryModal(allianceName) {
             }
         });
 
+        // ── Power Structure Analysis ──
+        // historyData[0] is the LATEST snapshot (newest-first from API)
+        const latestSnapshot = historyData[0];
+        const latestMembers = getAllianceMembers(latestSnapshot.data).sort((a,b) => b.hf - a.hf);
+        const totalSumHF = latestMembers.reduce((sum, m) => sum + (m.hf || 0), 0);
+        
+        // 1. Hegemony Index — % of total HF held by the top 3 players
+        const top3HF = latestMembers.slice(0, 3).reduce((sum, m) => sum + (m.hf || 0), 0);
+        const hegemony = totalSumHF > 0 ? ((top3HF / totalSumHF) * 100) : 0;
+        document.getElementById("allianceModalHegemony").textContent = hegemony.toFixed(1) + "%";
+
+        // 2. Roster Stability — compare current roster against the oldest snapshot within 30 days
+        //    historyData is newest-first, so we iterate backwards to find the oldest entry ≥ monthAgo
+        const monthAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        let baselineSnapshot = null;
+        for (let i = historyData.length - 1; i >= 0; i--) {
+            if (historyData[i].timestamp >= monthAgo) {
+                baselineSnapshot = historyData[i];
+                break; // found the oldest snapshot within 30 days
+            }
+        }
+        // Fallback: if all data is within 30 days, use the very oldest snapshot
+        if (!baselineSnapshot && historyData.length > 1) {
+            baselineSnapshot = historyData[historyData.length - 1];
+        }
+
+        if (baselineSnapshot && baselineSnapshot !== latestSnapshot) {
+            const oldRoster = getAllianceMembers(baselineSnapshot.data).map(x => x.name);
+            const newRoster = latestMembers.map(x => x.name);
+            const joined = newRoster.filter(n => !oldRoster.includes(n)).length;
+            const left = oldRoster.filter(n => !newRoster.includes(n)).length;
+            document.getElementById("allianceModalStability").textContent = `+${joined} / -${left}`;
+        } else {
+            document.getElementById("allianceModalStability").textContent = "Insufficient history";
+        }
+
+        // 3. Hegemony Doughnut Chart
+        // Secondary cleanup right before creation
+        const finalCheckHeg = Chart.getChart("allianceHegemonyChart");
+        if (finalCheckHeg) finalCheckHeg.destroy();
+
+        const hegCtx = document.getElementById("allianceHegemonyChart").getContext("2d");
+        const top5 = latestMembers.slice(0, 5);
+        const restSum = latestMembers.slice(5).reduce((sum, m) => sum + (m.hf || 0), 0);
+        
+        window.State.charts.allianceHegemony = new Chart(hegCtx, {
+            type: 'doughnut',
+            data: {
+                labels: [...top5.map(m => m.name), 'Others'],
+                datasets: [{
+                    data: [...top5.map(m => m.hf), restSum],
+                    backgroundColor: ['#dcb432', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', 'rgba(255,255,255,0.1)'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: window.CHART_THEME.text, boxWidth: 10, font: { size: 10 } } },
+                    tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${window.formatHF(ctx.raw)} (${((ctx.raw/totalSumHF)*100).toFixed(1)}%)` } }
+                }
+            }
+        });
+
+        // 4. Breakdown Table — top 10 members and their contribution %
+        document.getElementById("allianceMemberBreakdown").innerHTML = latestMembers.slice(0, 10).map((m, idx) => `
+            <tr>
+                <td style="color:var(--text-muted)">#${idx+1}</td>
+                <td style="color:var(--accent); font-weight:600;">${window.escapeHtml(m.name)}</td>
+                <td>${window.formatCompact(m.hf)} <span style="font-size:0.8em; color:var(--text-muted)">(${((m.hf/totalSumHF)*100).toFixed(1)}%)</span></td>
+            </tr>
+        `).join("");
+
     } catch (err) { document.getElementById("allianceDetailedBody").innerHTML = `<tr><td colspan='5' style="color:var(--error)">Error: ${window.escapeHtml(err.message)}</td></tr>`; }
+}
+// ===============================================================
+// RETRO OS WINDOW ENGINE
+// ===============================================================
+
+window.initWindowChrome = function() {
+    const dock = document.getElementById("minimized-dock");
+    const dockItems = document.getElementById("dock-items");
+
+    document.querySelectorAll(".window-card").forEach((card, idx) => {
+        // Skip if already initialized
+        if (card.querySelector(".window-titlebar")) return;
+
+        // ONLY apply to cards inside modals (as requested)
+        const modalParent = card.closest(".modal");
+        if (!modalParent) return;
+
+        // Smart label: derive from content
+        const dataTitle = card.getAttribute("data-window-title");
+        const h3 = card.querySelector("h3");
+        const h2 = card.querySelector("h2");
+        const kpiLabel = card.querySelector(".kpi-label");
+        const smartTitle = dataTitle || h3?.textContent?.trim() || h2?.textContent?.trim() || kpiLabel?.textContent?.trim() || "Window " + (idx + 1);
+
+        card.setAttribute("data-window-id", `win-${idx}`);
+
+        const titlebar = document.createElement("div");
+        titlebar.className = "window-titlebar";
+
+        titlebar.innerHTML = `
+            <span class="window-titlebar-title">${window.escapeHtml(smartTitle)}</span>
+            <div class="window-controls">
+                <button class="win-min" title="Minimize to dock">■</button>
+                <button class="win-max" title="Toggle fullscreen">□</button>
+                <button class="win-close" title="Hide panel">×</button>
+            </div>
+        `;
+
+        card.appendChild(titlebar);
+
+        // ── Minimize ──
+        titlebar.querySelector(".win-min").addEventListener("click", (e) => {
+            e.stopPropagation();
+            // If in modal, hide the OVERLAY, not just the card
+            if (modalParent) modalParent.classList.add("hidden");
+            else card.style.display = "none";
+            
+            dock.classList.remove("hidden");
+
+            const pill = document.createElement("button");
+            pill.className = "dock-pill";
+            pill.textContent = smartTitle;
+            pill.addEventListener("click", () => {
+                if (modalParent) modalParent.classList.remove("hidden");
+                else card.style.display = "";
+                
+                pill.remove();
+                if (dockItems.children.length === 0) dock.classList.add("hidden");
+            });
+            dockItems.appendChild(pill);
+        });
+
+        // ── Maximize (toggle — relocates to body) ──
+        titlebar.querySelector(".win-max").addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (card.classList.contains("window-maximized")) {
+                _unmaximize(card);
+            } else {
+                _maximize(card);
+            }
+        });
+
+        // ── Close ──
+        titlebar.querySelector(".win-close").addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (card.classList.contains("window-maximized")) _unmaximize(card);
+            if (modalParent) modalParent.classList.add("hidden");
+            else card.style.display = "none";
+        });
+    });
+
+    function _maximize(card) {
+        // Remember original parent and position
+        card._origParent = card.parentElement;
+        card._origNext = card.nextElementSibling;
+
+        // Create backdrop
+        const backdrop = document.createElement("div");
+        backdrop.className = "window-maximize-backdrop";
+        backdrop.addEventListener("click", () => _unmaximize(card));
+        document.body.appendChild(backdrop);
+        card._maximizeBackdrop = backdrop;
+
+        // Move card to body so it escapes all parent flex/grid constraints
+        document.body.appendChild(card);
+        card.classList.add("window-maximized");
+    }
+
+    function _unmaximize(card) {
+        card.classList.remove("window-maximized");
+
+        // Move card back to its original parent
+        if (card._origParent) {
+            if (card._origNext) {
+                card._origParent.insertBefore(card, card._origNext);
+            } else {
+                card._origParent.appendChild(card);
+            }
+            card._origParent = null;
+            card._origNext = null;
+        }
+
+        // Remove backdrop
+        if (card._maximizeBackdrop) {
+            card._maximizeBackdrop.remove();
+            card._maximizeBackdrop = null;
+        }
+    }
+
+    // ── Global ESC key handler (bind once) ──
+    if (!window._windowEscBound) {
+        window._windowEscBound = true;
+        document.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape") return;
+
+            // 1. Un-maximize any fullscreen window
+            const maxed = document.querySelector(".window-maximized");
+            if (maxed) {
+                _unmaximize(maxed);
+                return;
+            }
+
+            // 2. Close the topmost visible modal
+            const modals = document.querySelectorAll(".modal:not(.hidden)");
+            if (modals.length > 0) {
+                modals[modals.length - 1].classList.add("hidden");
+                return;
+            }
+        });
+    }
+
+    // ── Click-outside to close modals (bind once) ──
+    if (!window._modalClickOutBound) {
+        window._modalClickOutBound = true;
+        document.querySelectorAll(".modal").forEach(modal => {
+            modal.addEventListener("click", (e) => {
+                // Only close if clicking the dark overlay itself, not its children
+                if (e.target === modal) {
+                    modal.classList.add("hidden");
+                }
+            });
+        });
+    }
+};
+
+// ===============================================================
+// ALLIANCE COMMAND CENTER
+// ===============================================================
+
+window.AllianceCommandCenter = {
+    _chart: null,
+    _econChart: null,
+
+    open: function(focusTab) {
+        const modal = document.getElementById("allianceCommandModal");
+        if (!modal) return;
+        modal.classList.remove("hidden");
+
+        // Switch to the correct sub-tab
+        const tabMap = { roster: "accRoster", hf: "accHFTrajectory", top: "accRoster", tokens: "accActivity" };
+        const target = tabMap[focusTab] || "accRoster";
+        this.switchTab(target);
+        this.populateData();
+
+        // Re-init chrome for newly visible modal
+        window.initWindowChrome?.();
+    },
+
+    close: function() {
+        document.getElementById("allianceCommandModal")?.classList.add("hidden");
+    },
+
+    switchTab: function(tabId) {
+        document.querySelectorAll(".acc-content").forEach(el => el.classList.add("hidden"));
+        document.getElementById(tabId)?.classList.remove("hidden");
+
+        document.querySelectorAll(".acc-tab").forEach(btn => {
+            const isActive = btn.dataset.accTab === tabId;
+            btn.classList.toggle("active", isActive);
+            btn.style.background = isActive ? "var(--chrome-bg)" : "var(--bg-surface)";
+            btn.style.borderColor = isActive ? "var(--border-gold)" : "var(--border-dark)";
+            btn.style.color = isActive ? "var(--chrome-text)" : "var(--text-muted)";
+        });
+
+        // Render charts when their tab becomes visible
+        if (tabId === "accHFTrajectory") this.renderHFChart();
+        if (tabId === "accEconomy") this.renderEconomyChart();
+    },
+
+    populateData: function() {
+        const players = window.State.hfDataSnapshot || [];
+        const roster = window.State.tqcRoster || [];
+        
+        const tqcPlayers = players.filter(p => {
+            const isTqcTagged = (p.alliance || "").toUpperCase() === "TQC";
+            const isRostered = roster.some(m => m.toLowerCase() === p.name?.toLowerCase());
+            return roster.length > 0 ? isRostered : isTqcTagged;
+        });
+
+        // Roster stats
+        const el = (id) => document.getElementById(id);
+        if (el("accMemberCount")) {
+            el("accMemberCount").textContent = tqcPlayers.length;
+        }
+        
+        const totalHF = tqcPlayers.reduce((acc, p) => acc + (p.hf || 0), 0);
+        if (el("accAvgHF")) {
+            el("accAvgHF").textContent = window.formatHF ? window.formatHF(Math.round(totalHF / (tqcPlayers.length || 1))) : Math.round(totalHF / (tqcPlayers.length || 1)).toLocaleString();
+        }
+        
+        const totalAnthill = tqcPlayers.reduce((acc, p) => acc + (p.anthill || 0), 0);
+        if (el("accTotalAnthill")) {
+            el("accTotalAnthill").textContent = totalAnthill.toLocaleString();
+        }
+
+        // Economy stats
+        const totalTech = tqcPlayers.reduce((acc, p) => acc + (p.tech || 0), 0);
+        const totalFight = tqcPlayers.reduce((acc, p) => acc + (p.fight || 0), 0);
+        if (el("accTotalTech")) el("accTotalTech").textContent = totalTech.toLocaleString();
+        if (el("accTotalFight")) el("accTotalFight").textContent = totalFight.toLocaleString();
+        if (el("accAvgTech")) el("accAvgTech").textContent = Math.round(totalTech / (tqcPlayers.length || 1)).toLocaleString();
+
+        // Roster table
+        const sorted = [...tqcPlayers].sort((a, b) => b.hf - a.hf);
+        const tbody = el("accRosterBody");
+        if (tbody) {
+            tbody.innerHTML = sorted.map((p, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td style="color: var(--accent); font-weight: 600;">${window.escapeHtml(p.name)}</td>
+                    <td>${window.formatHF ? window.formatHF(p.hf) : p.hf.toLocaleString()}</td>
+                    <td>${(p.anthill || 0).toLocaleString()}</td>
+                    <td>${(p.tech || 0).toLocaleString()}</td>
+                    <td>${(p.fight || 0).toLocaleString()}</td>
+                </tr>`).join("");
+        }
+
+        // Activity feed from logs
+        this.populateActivity();
+    },
+
+    populateActivity: function() {
+        const tbody = document.getElementById("accActivityBody");
+        if (!tbody) return;
+        const logs = window.State.logs || [];
+        if (logs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="loading-cell">No activity logged yet.</td></tr>';
+            return;
+        }
+        const recent = logs.slice(-50).reverse();
+        tbody.innerHTML = recent.map(log => {
+            const ts = new Date(log.ts || log.timestamp).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+            return `<tr>
+                <td style="white-space:nowrap; font-family:var(--font-ui); font-size:0.8em;">${ts}</td>
+                <td style="font-weight:600; color:var(--accent);">${window.escapeHtml(log.event || log.type || "—")}</td>
+                <td style="font-size:0.85em;">${window.escapeHtml(JSON.stringify(log.details || log.data || "").substring(0, 80))}</td>
+                <td>${window.escapeHtml(log.by || log.submittedBy || "—")}</td>
+            </tr>`;
+        }).join("");
+    },
+
+    renderHFChart: function() {
+        const history = window.State.allianceHistoryData;
+        if (!history || history.length === 0) return;
+
+        // Find TQC entries across history snapshots
+        const tqcHistory = history.map(snap => {
+            const tqc = (snap.data || []).find(a => a.name === "TQC");
+            return { timestamp: snap.timestamp, hf: tqc?.hf || 0, members: tqc?.members || 0, anthill: tqc?.anthill || 0 };
+        }).filter(item => item.hf > 0);
+
+        if (tqcHistory.length === 0) return;
+
+        const labels = tqcHistory.map(s => new Date(s.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+        const ctx = document.getElementById("accHFChart");
+        if (!ctx) return;
+
+        if (this._chart) this._chart.destroy();
+        this._chart = new Chart(ctx.getContext("2d"), {
+            type: "line",
+            data: {
+                labels,
+                datasets: [
+                    { label: "Total HF", data: tqcHistory.map(s => s.hf), borderColor: window.CHART_THEME.accentGlow, backgroundColor: "rgba(232, 196, 106, 0.1)", fill: true, tension: 0.3 },
+                    { label: "Members", data: tqcHistory.map(s => s.members), borderColor: "#7ab8e8", backgroundColor: "transparent", yAxisID: "y1" }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font } }, grid: { color: window.CHART_THEME.grid } },
+                    y: { ticks: { color: window.CHART_THEME.accentGlow, font: { family: window.CHART_THEME.font }, callback: v => window.formatCompact?.(v) || v }, grid: { color: window.CHART_THEME.grid } },
+                    y1: { type: "linear", display: true, position: "right", ticks: { color: "#7ab8e8", font: { family: window.CHART_THEME.font } }, grid: { drawOnChartArea: false } }
+                },
+                plugins: {
+                    legend: { labels: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font, size: 12 } } },
+                    tooltip: { mode: "index", intersect: false, backgroundColor: window.CHART_THEME.tooltipBg }
+                }
+            }
+        });
+    },
+
+    renderEconomyChart: function() {
+        const history = window.State.allianceHistoryData;
+        if (!history || history.length === 0) return;
+
+        const tqcHistory = history.map(snap => {
+            const tqc = (snap.data || []).find(a => a.name === "TQC");
+            return { timestamp: snap.timestamp, tech: tqc?.tech || 0, fight: tqc?.fight || 0, anthill: tqc?.anthill || 0 };
+        }).filter(item => item.tech > 0 || item.fight > 0);
+
+        if (tqcHistory.length === 0) return;
+        const labels = tqcHistory.map(s => new Date(s.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+        const ctx = document.getElementById("accEconomyChart");
+        if (!ctx) return;
+
+        if (this._econChart) this._econChart.destroy();
+        this._econChart = new Chart(ctx.getContext("2d"), {
+            type: "line",
+            data: {
+                labels,
+                datasets: [
+                    { label: "Tech", data: tqcHistory.map(s => s.tech), borderColor: "#7ab8e8", backgroundColor: "transparent" },
+                    { label: "Fight", data: tqcHistory.map(s => s.fight), borderColor: "#e07a5f", backgroundColor: "transparent" },
+                    { label: "Anthill", data: tqcHistory.map(s => s.anthill), borderColor: window.CHART_THEME.maroon, backgroundColor: "transparent" }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font } }, grid: { color: window.CHART_THEME.grid } },
+                    y: { ticks: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font }, callback: v => v.toLocaleString() }, grid: { color: window.CHART_THEME.grid } }
+                },
+                plugins: {
+                    legend: { labels: { color: window.CHART_THEME.text, font: { family: window.CHART_THEME.font, size: 12 } } },
+                    tooltip: { mode: "index", intersect: false, backgroundColor: window.CHART_THEME.tooltipBg }
+                }
+            }
+        });
+    },
+
+    initListeners: function() {
+        // Stat card clicks
+        document.querySelectorAll(".stat-card-clickable").forEach(card => {
+            card.addEventListener("click", () => this.open(card.dataset.statType));
+        });
+
+        // Sub-tab switching
+        document.querySelectorAll(".acc-tab").forEach(btn => {
+            btn.addEventListener("click", () => this.switchTab(btn.dataset.accTab));
+        });
+
+        // Close modal
+        document.getElementById("closeAllianceCommand")?.addEventListener("click", () => this.close());
+        document.getElementById("closeAllianceCommandBtn")?.addEventListener("click", () => this.close());
+    }
+};
+
+// ═══════════════════════════════════════════════════════════
+// CLOCK LOGIC
+// ═══════════════════════════════════════════════════════════
+function startAdminClocks() {
+    const serverEl = document.getElementById("clockServer");
+    const localEl = document.getElementById("clockLocal");
+    if (!serverEl || !localEl) return;
+
+    function updateClocks() {
+        const now = new Date();
+        
+        const serverTime = now.toLocaleTimeString("en-US", {
+            timeZone: "Europe/Paris",
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+        });
+        
+        const localTime = now.toLocaleTimeString("en-US", {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+        });
+
+        serverEl.textContent = serverTime;
+        localEl.textContent = localTime;
+    }
+
+    updateClocks();
+    setInterval(updateClocks, 1000);
 }
