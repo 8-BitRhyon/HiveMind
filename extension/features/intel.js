@@ -127,9 +127,53 @@ var IntelOverlay = {
 
                 HMLogger.info("[Intel] Harvested coordinates for " + playerName + ": " + x + ", " + y);
                 
+                // Always save locally (even without login) for ServerMap
+                try {
+                    var localCoords = JSON.parse(localStorage.getItem('HM_ServerMap_Harvested') || '[]');
+                    var existingIdx = -1;
+                    for (var li = 0; li < localCoords.length; li++) {
+                        if (localCoords[li].name && localCoords[li].name.toLowerCase() === playerName.toLowerCase()) {
+                            existingIdx = li;
+                            break;
+                        }
+                    }
+                    var coordEntry = { name: playerName, x: x, y: y, alliance: "None", ts: Date.now() };
+                    if (existingIdx >= 0) localCoords[existingIdx] = coordEntry;
+                    else localCoords.push(coordEntry);
+                    localStorage.setItem('HM_ServerMap_Harvested', JSON.stringify(localCoords));
+                    HMLogger.debug("[Intel] Coordinate saved to local cache");
+                } catch(localErr) {
+                    HMLogger.error("[Intel] Failed to save coord locally: " + localErr.message);
+                }
+
+                // Dedup: hash the coord payload and skip if unchanged within 1hr
+                var coordPayload = playerName.toLowerCase() + ":" + x + ":" + y;
+                var hash = 0;
+                for (var ci = 0; ci < coordPayload.length; ci++) {
+                    hash = ((hash << 5) - hash) + coordPayload.charCodeAt(ci);
+                    hash = hash & hash;
+                }
+                var hashStr = hash.toString();
+
+                var cacheKey = "HM_CoordHash_" + playerName.toLowerCase();
+                var lastHash = typeof HMStorage !== "undefined" ? HMStorage.load(cacheKey, "") : localStorage.getItem(cacheKey);
+                var lastSync = parseInt((typeof HMStorage !== "undefined" ? HMStorage.load(cacheKey + "_ts", "0") : localStorage.getItem(cacheKey + "_ts")) || "0");
+
+                if (hashStr === lastHash && Date.now() - lastSync < 3600000) {
+                    HMLogger.info("[Intel] Coordinates unchanged for " + playerName + ", skipping API call (1hr cooldown).");
+                    break;
+                }
+
                 // Submit to Worker via NetworkManager
                 if (typeof NetworkManager !== "undefined" && NetworkManager.submitCoords) {
                     NetworkManager.submitCoords([{ name: playerName, x: x, y: y }]);
+                    if (typeof HMStorage !== "undefined") {
+                        HMStorage.save(cacheKey, hashStr);
+                        HMStorage.save(cacheKey + "_ts", String(Date.now()));
+                    } else {
+                        localStorage.setItem(cacheKey, hashStr);
+                        localStorage.setItem(cacheKey + "_ts", String(Date.now()));
+                    }
                 }
                 break;
             }

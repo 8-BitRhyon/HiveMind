@@ -344,6 +344,7 @@ var FloodManager = {
         }
       }
     });
+    HMState.RemainingUnits = [...army];
   },
 
   renderTable: function () {

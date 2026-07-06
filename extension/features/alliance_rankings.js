@@ -6,9 +6,44 @@
 // ====================================================================================================
 
 var AllianceRankingsParser = {
+    _observer: null,
+    _debounceTimer: null,
+
     init: function () {
         HMLogger.info("[Alliance Rankings] Initializing parser");
         this.parseRankings();
+        this.watchForPagination();
+    },
+
+    /**
+     * Watches for XAJAX table swaps triggered by pagination clicks.
+     */
+    watchForPagination: function () {
+        var self = this;
+        var container = document.getElementById("centre") ||
+                        document.getElementById("contenu") ||
+                        document.querySelector(".tab_triable")?.parentNode;
+
+        if (!container) return;
+        if (this._observer) this._observer.disconnect();
+
+        this._observer = new MutationObserver(function (mutations) {
+            var isRelevant = mutations.some(function (m) {
+                return m.addedNodes.length > 0 || m.removedNodes.length > 0;
+            });
+            if (isRelevant) {
+                clearTimeout(self._debounceTimer);
+                self._debounceTimer = setTimeout(function () {
+                    if (document.querySelector(".tab_triable")) {
+                        HMLogger.info("[Alliance Rankings] Pagination detected — re-scraping...");
+                        self.parseRankings();
+                    }
+                }, 500);
+            }
+        });
+
+        this._observer.observe(container, { childList: true, subtree: true });
+        HMLogger.debug("[Alliance Rankings] Pagination observer installed");
     },
 
     parseRankings: function () {

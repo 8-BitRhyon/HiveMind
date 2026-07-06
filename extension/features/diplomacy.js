@@ -43,7 +43,9 @@ var DiplomacyParser = {
                 pactLinks.forEach(function (link) {
                     var href = link.getAttribute("href") || "";
                     if (href.includes("classementAlliance.php")) {
-                        var allianceTag = link.textContent.trim();
+                        // Extract tag from URL (e.g., ?alliance=TAG) for guaranteed reliability
+                        var mapMatch = href.match(/[?&]alliance=([^&]+)/);
+                        var allianceTag = mapMatch ? mapMatch[1] : link.textContent.trim();
                         if (allianceTag) {
                             pacts.push(allianceTag);
                         }
@@ -72,7 +74,8 @@ var DiplomacyParser = {
                         warLinks.forEach(function (link) {
                             var href = link.getAttribute("href") || "";
                             if (href.includes("classementAlliance.php")) {
-                                var allianceTag = link.textContent.trim();
+                                var warMatch = href.match(/[?&]alliance=([^&]+)/);
+                                var allianceTag = warMatch ? warMatch[1] : link.textContent.trim();
                                 if (allianceTag) {
                                     wars.push(allianceTag);
                                 }
@@ -90,6 +93,9 @@ var DiplomacyParser = {
 
             // 3. Submit
             if (pacts.length > 0 || wars.length > 0) {
+                // Local cached version for immediate UI use (Server Map, etc)
+                localStorage.setItem("HM_Diplomacy", JSON.stringify({ pacts: pacts, wars: wars }));
+                
                 var payloadStr = pacts.join(",") + "|" + wars.join(",");
                 var hash = 0;
                 for (var i = 0; i < payloadStr.length; i++) {
